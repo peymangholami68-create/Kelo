@@ -1,24 +1,50 @@
-# KELO architecture decisions
+# KELO production architecture
 
-## Account model
+## 1. Account model
 
-Kelo یک حساب کاربری واحد دارد. کاربر هنگام ورود نقش تجاری «کشاورز» یا «ماشین‌دار» انتخاب نمی‌کند.
+Kelo has one user account. The user does **not** choose a commercial role at login.
 
-- ثبت Request => کاربر در آن transaction درخواست‌دهنده است.
-- ثبت Service Listing / Machine => کاربر در آن transaction ارائه‌دهنده است.
-- یک حساب می‌تواند هر دو نوع فعالیت را داشته باشد.
-- فقط نقش‌های سیستمی مانند admin/support/superadmin برای authorization نگهداری می‌شوند.
+- Creating a Request makes the account the requester for that transaction.
+- Creating a Service Listing / Machine makes the account a provider for that transaction.
+- The same account may do both.
+- System roles only (`admin`, `support`, `superadmin`) control privileged operations.
 
-## Deployment model
+This distinction must be preserved in both the API and database.
 
-- GitHub: source control
-- Vercel: frontend hosting / serverless edge
-- Supabase: Postgres + Auth + Storage + RLS + backend functions
-- Production domain: kelo.ir
-- Current test deployment: kelo-marketplace.vercel.app
+## 2. Deployment model
 
-## Current phase
+### Development / prototype
 
-`Final_1_osm_fixed2.html` UI baseline بود. این بسته بدون تغییر اساسی در UI، آن را به ساختار چندفایلی تبدیل کرده و قرارداد Backend و schema واقعی Supabase را کنار آن قرار داده است.
+`GitHub -> Vercel -> kelo-marketplace.vercel.app`
 
-The runtime remains `mode=local` until a real Supabase project is connected, so the current demo remains runnable.
+Vercel remains useful as a fast preview/test environment.
+
+### Production target
+
+`GitHub -> VPS Iran -> Nginx -> Node/Express -> PostgreSQL/PostGIS`
+
+`kelo.ir` will point directly to the VPS when the production server is ready. Vercel is not required for production.
+
+## 3. Storage model
+
+- Persistent business data: PostgreSQL/PostGIS.
+- Uploaded images/documents: object/file storage on the VPS or an S3-compatible storage service later.
+- Browser `localStorage`: compatibility/demo only, not the production source of truth.
+
+## 4. Backend boundary
+
+The browser talks to `window.KeloBackend` rather than knowing database details.
+
+Current default remains `mode: local` so the existing UI can still be previewed on Vercel.
+
+Production switches to `mode: api`, pointing to the Node backend. This is an adapter change, not a UI rewrite.
+
+## 5. Critical marketplace rule
+
+Acceptance is serialized in PostgreSQL using a transaction and the `accept_request_recipient()` function. The shared Request row is the serialization point. This prevents two providers from winning the same request concurrently.
+
+The API, not the browser, owns financial and state-changing business rules.
+
+## 6. Secrets
+
+No passwords, API keys, payment secrets, SMS secrets or database passwords belong in GitHub. They live in the VPS `.env`/secret store.

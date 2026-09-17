@@ -1,17 +1,15 @@
 /**
  * KELO runtime configuration.
  *
- * This file intentionally contains no secrets.
- * For the current browser prototype, mode stays "local".
- * When the Supabase project is ready, set mode to "supabase" and provide
- * the public (anon) project URL/key here or inject them during deployment.
- * Never place a service_role key in browser code.
+ * No secret belongs in this file. In development/test the prototype keeps
+ * using localStorage. On the VPS, switch mode to "api" and point baseUrl at
+ * the Kelo backend (normally the same origin, so baseUrl can remain empty).
  */
 window.KELO_CONFIG = Object.assign({
   appEnv: 'development',
   mode: 'local',
-  supabase: {
-    url: '',
-    anonKey: ''
+  api: {
+    baseUrl: '',
+    timeoutMs: 15000
   }
 }, window.KELO_CONFIG || {});
