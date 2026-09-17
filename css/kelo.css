@@ -60,7 +60,7 @@ a{text-decoration:none;color:inherit}
 .kelo-toast.error{background:#c0392b}
 .logo{display:inline-flex;flex-direction:column;align-items:flex-start;width:max-content}
 .logo-brand-row{display:inline-flex;align-items:center;font-weight:900;line-height:1;color:var(--leaf-dark);direction:ltr}
-.logo-brand-text{font-size:34px;letter-spacing:-0.5px;color:var(--brand-gold)}
+.logo-brand-text{font-family:'Poppins','Vazirmatn',Tahoma,sans-serif;font-size:34px;font-weight:700;letter-spacing:-1px;color:var(--brand-gold)}
 .logo-pin-o{width:32px !important;height:38px !important;margin-left:6px;vertical-align:middle;filter:drop-shadow(0 3px 6px rgba(63,101,44,0.2));transition:transform .3s ease}
 .logo:hover .logo-pin-o{transform:translateY(-2px) scale(1.05)}
 .logo-subtext{display:none}
@@ -79,7 +79,7 @@ a{text-decoration:none;color:inherit}
 .hero-grid{display:grid;grid-template-columns:1fr 1.08fr;gap:35px;align-items:center}
 .hero-content{padding:20px 0}
 .hero h1{font-size:48px;line-height:1.25;margin:0 0 17px;color:#1F1F1F}
-.hero h1 span{color:var(--brand-gold)}
+.hero h1 span{color:#1F1F1F}
 .hero p{font-size:17px;line-height:2.1;color:var(--muted);max-width:560px}
 .hero-buttons{display:flex;gap:10px;margin-top:25px;flex-wrap:wrap}
 .hero-buttons .btn{padding:18px 44px;font-size:20px;min-width:320px}
