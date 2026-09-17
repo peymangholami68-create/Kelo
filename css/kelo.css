@@ -171,7 +171,7 @@ th,td{padding:12px 9px;text-align:right;border-bottom:1px solid var(--line);whit
 th{color:var(--muted);font-weight:700}
 .badge{display:inline-block;padding:5px 9px;border-radius:20px;font-size:10px;background:#edf2df;color:var(--leaf-dark)}
 footer{padding:30px 0;text-align:center;background:#ffffff;border-top:1px solid #e5e5e5}
-.footer-logo{color:var(--brand-gold);font-weight:900;font-size:18px;margin-bottom:5px}
+.footer-logo{font-family:'Poppins','Vazirmatn',Tahoma,sans-serif;color:var(--brand-gold);font-weight:700;font-size:20px;letter-spacing:-0.5px;margin-bottom:5px}
 .footer-sub{color:#1F1F1F;font-size:11px;margin-top:2px}
 .profile-section{padding:30px 0}
 .profile-section .card{max-width:650px;margin:0 auto}
