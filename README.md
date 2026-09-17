@@ -1,92 +1,71 @@
 # KELO | بازار خدمات کشاورزی
 
-This repository is the **VPS-ready production foundation** of Kelo, built from the latest `Final_1_osm_fixed2` UI.
+این نسخه، مبنای Production کِلو برای استقرار روی VPS است و از UI فعلی `Final_1_osm_fixed2` ساخته شده است.
 
-## Account model
+## مدل حساب کاربری
 
-Kelo has one user account. There is no commercial role selection at login.
+کِلو فقط **یک حساب کاربری** دارد. در زمان ورود، کاربر نقش «کشاورز» یا «ماشین‌دار» انتخاب نمی‌کند.
 
-A user can:
-- create a Request and act as requester;
-- create a Service Listing / Machine and act as provider;
-- do both with the same account.
+- ثبت درخواست => کاربر در آن تراکنش درخواست‌دهنده است.
+- ثبت ماشین/ارائه خدمت => کاربر در آن تراکنش ارائه‌دهنده است.
+- یک حساب می‌تواند هر دو فعالیت را داشته باشد.
+- فقط نقش‌های سیستمی مانند `admin` برای authorization نگهداری می‌شوند.
 
-Only system roles such as `admin`, `support`, and `superadmin` are security/authorization roles.
+## وضعیت فعلی
 
-## Environments
+- UI اصلی حفظ شده است.
+- Login/Session/Users به Backend واقعی متصل شده‌اند.
+- در Production، session به‌صورت HttpOnly cookie مدیریت می‌شود و session در PostgreSQL نگهداری می‌شود.
+- `users` و `sessions` در PostgreSQL قرار دارند.
+- Profile و profileLocation از طریق `/api/me` در PostgreSQL ذخیره می‌شوند.
+- در Vercel preview اگر API در دسترس نباشد، برنامه برای تست UI به حالت local برمی‌گردد.
+- OTP واقعی هنوز مرحله بعدی است؛ UI فعلی همچنان شماره موبایل + کد ملی را می‌گیرد تا مسیر فعلی بدون بازطراحی حفظ شود.
 
-### Current test
+## Production architecture
 
-`GitHub -> Vercel -> kelo-marketplace.vercel.app`
+```text
+GitHub
+  ↓
+Vercel (current preview/test)
 
-The current prototype stays in `mode=local`, so the existing UI can still be tested without an external database.
-
-### Final production target
-
-`GitHub -> VPS Iran -> Nginx -> Node/Express -> PostgreSQL/PostGIS -> kelo.ir`
-
-Vercel is not required for the production deployment.
-
-## What changed in this version
-
-- Removed Supabase from the **active** architecture. The old Supabase foundation is kept under `legacy/supabase-foundation/` only for reference/rollback.
-- Added a real Node/Express backend foundation.
-- Added PostgreSQL/PostGIS migrations.
-- Added migration runner and DB status scripts.
-- Added Docker + Docker Compose for VPS deployment.
-- Added Nginx reverse-proxy example for `kelo.ir`.
-- Added browser `KeloBackend` adapter so UI code has a stable boundary between local prototype persistence and the future API.
-- Added health/readiness endpoints and a public service catalog endpoint.
-- Added rate limiting and security headers on the API server.
-- Kept the visible UI and current local test behavior intact.
-
-## Important current limitation
-
-The frontend is **not yet switched to API persistence**. That is intentional. This release establishes the architecture first so we can migrate authentication/data operations without redesigning the UI.
-
-## Local server
-
-Requirements: Node 22+.
-
-```bash
-cp .env.example .env
-# Set DATABASE_URL
-npm install
-npm run db:migrate
-npm start
+Production:
+kelo.ir
+  ↓
+Nginx
+  ↓
+Node / Express API
+  ↓
+PostgreSQL
 ```
 
-The web app will be served from `http://127.0.0.1:3000`.
+فایل‌ها:
 
-## Docker / VPS
+```text
+server/index.js       API + static host
+server/auth.js        Session/cookie/auth logic
+server/db.js          PostgreSQL pool
+server/migrate.js     Migration runner
+server/create-admin.js Admin bootstrap
 
-```bash
-cp .env.example .env
-# Set POSTGRES_PASSWORD and other production values
-
-docker compose up -d --build
+database/migrations/  SQL migrations
+nginx/                 Reverse proxy example
 ```
 
-The app binds to `127.0.0.1:3000`; place Nginx in front of it and terminate TLS there.
+برای وب‌اپلیکیشن، `node-postgres` با connection pool استفاده شده است؛ pool الگوی توصیه‌شده برای queryهای متعدد و همزمان است. citeturn342144search0turn342144search1
 
-## Secrets
+## راه‌اندازی روی VPS
 
-Never commit:
-- `.env`
-- database passwords
-- SMS API keys
-- payment credentials
-- session secrets
-- provider service-role keys
+1. PostgreSQL را آماده کنید یا `docker-compose.yml` را اجرا کنید.
+2. `.env.example` را به `.env` تبدیل و مقدارهای واقعی را وارد کنید.
+3. `npm install`
+4. `npm run db:migrate`
+5. برای ساخت مدیر: متغیرهای `KELO_ADMIN_NAME`, `KELO_ADMIN_PHONE`, `KELO_ADMIN_NATIONAL_ID` را موقتاً در محیط اجرای دستور قرار دهید و `npm run admin:create` را اجرا کنید.
+6. `npm start`
+7. Nginx را طبق `nginx/kelo.conf.example` تنظیم کنید و HTTPS را فعال کنید.
 
-Only `.env.example` belongs in Git.
+## نکته امنیتی
 
-## Source of truth
-
-The current UI source is:
-- `index.html`
-- `css/kelo.css`
-- `js/app.js`
-- `js/preloader.js`
-
-The old single-file source is kept in `legacy/Final_1_osm_fixed2.html`.
+- `.env` نباید وارد GitHub شود.
+- session در `HttpOnly` cookie است؛ JavaScript مرورگر token session را نمی‌بیند.
+- `service_role` یا پسورد دیتابیس نباید در Frontend قرار بگیرد.
+- OTP واقعی در مرحله بعد جایگزین ورود فعلی خواهد شد.

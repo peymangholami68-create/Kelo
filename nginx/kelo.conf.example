@@ -1,6 +1,3 @@
-# Example host-level Nginx reverse proxy for kelo.ir.
-# Install TLS with your preferred ACME/certificate tool after DNS is pointed to the VPS.
-
 server {
     listen 80;
     server_name kelo.ir www.kelo.ir;
@@ -12,6 +9,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }

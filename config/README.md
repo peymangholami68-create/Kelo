@@ -1,12 +1,8 @@
-# KELO runtime configuration
+# KELO config
 
-The browser config contains public/non-secret values only.
+`kelo-config.js` contains browser-safe configuration only.
 
-Development / current Vercel preview:
-- `mode: local`
-- browser data is still stored locally for compatibility.
+- `backendMode: 'auto'` => use `/api/*` when the VPS backend responds; otherwise keep local demo mode.
+- `apiBaseUrl: ''` => same-origin API in production (`kelo.ir/api/...`).
 
-Production VPS:
-- `mode: api`
-- `api.baseUrl: ''` is preferred when Node serves the frontend and API on the same origin.
-- secrets remain server-side in `.env` and are never placed in browser code.
+No database URL, password or service secret belongs here.
