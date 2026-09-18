@@ -1,15 +1,18 @@
 /**
  * KELO runtime configuration.
  *
- * The browser never stores database credentials or server secrets here.
- * Production runs the frontend and API on the same origin (kelo.ir), so
- * apiBaseUrl can stay empty and the browser uses /api/*.
- * Vercel preview automatically falls back to the existing local demo when
- * no API is available.
+ * mode=auto:
+ *   - uses the real VPS backend when /api/health exists;
+ *   - falls back to the existing local prototype only when the API is not
+ *     present (e.g. the current static Vercel test deployment).
+ *
+ * mode=server:
+ *   - production/VPS mode; API must be available.
+ *
+ * No secrets belong in this file.
  */
 window.KELO_CONFIG = Object.assign({
   appEnv: 'development',
-  backendMode: 'auto',
-  apiBaseUrl: '',
-  sessionCookieName: 'kelo_session'
+  mode: 'auto',
+  apiBase: '/api'
 }, window.KELO_CONFIG || {});

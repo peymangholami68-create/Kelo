@@ -1,125 +1,129 @@
 /**
- * KELO browser/backend bridge.
+ * KELO frontend/backend bridge.
  *
- * In production the frontend and API share the same origin:
- *   https://kelo.ir            -> web UI
- *   https://kelo.ir/api/*      -> Node/Express API
- *
- * The Vercel preview keeps the old local prototype working automatically when
- * /api/health is not available.
+ * In VPS/production mode the browser talks to the same-origin Express API.
+ * In the current static Vercel test, /api/health is absent, so the client
+ * safely falls back to the existing localStorage prototype.
  */
 (function () {
   const cfg = window.KELO_CONFIG || {};
-  const rawBase = String(cfg.apiBaseUrl || '').trim();
-  const API_BASE = rawBase.replace(/\/+$/, '');
-  let remoteAvailable = false;
-  let availabilityChecked = false;
-  let checkingPromise = null;
+  const state = {
+    requestedMode: cfg.mode || 'auto',
+    mode: 'local',
+    apiBase: String(cfg.apiBase || '/api').replace(/\/$/, ''),
+    initPromise: null,
+    lastError: null
+  };
 
-  function buildUrl(path) {
-    if (/^https?:\/\//i.test(path)) return path;
-    const normalized = path.startsWith('/') ? path : '/' + path;
-    return API_BASE + normalized;
+  async function parseResponse(res) {
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    if (!res.ok) {
+      const err = new Error(body && body.error ? body.error : `HTTP ${res.status}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body || {};
   }
 
-  async function apiFetch(path, options) {
-    const opts = Object.assign({ credentials: 'include' }, options || {});
-    opts.headers = Object.assign({ 'Accept': 'application/json' }, opts.headers || {});
-    if (opts.body && typeof opts.body !== 'string') {
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(opts.body);
-    }
-    const controller = new AbortController();
-    const timeoutMs = Number(opts.timeoutMs || 5000);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    delete opts.timeoutMs;
-    opts.signal = opts.signal || controller.signal;
-    try {
-      const res = await fetch(buildUrl(path), opts);
-      let payload = null;
-      try { payload = await res.json(); } catch (e) { payload = null; }
-      if (!res.ok) {
-        const error = new Error(payload?.error || payload?.message || ('API error ' + res.status));
-        error.status = res.status;
-        error.payload = payload;
-        throw error;
+  async function request(path, options) {
+    const opts = Object.assign({
+      credentials: 'same-origin',
+      headers: {}
+    }, options || {});
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    const res = await fetch(state.apiBase + path, opts);
+    return parseResponse(res);
+  }
+
+  async function init() {
+    if (state.initPromise) return state.initPromise;
+    state.initPromise = (async function () {
+      if (state.requestedMode === 'local') {
+        state.mode = 'local';
+        return state.mode;
       }
-      return payload;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
 
-  async function checkApi() {
-    if (availabilityChecked) return remoteAvailable;
-    if (checkingPromise) return checkingPromise;
-    const forcedLocal = (cfg.backendMode || 'auto') === 'local';
-    const forcedRemote = (cfg.backendMode || 'auto') === 'api';
-    if (forcedLocal) {
-      availabilityChecked = true;
-      remoteAvailable = false;
-      return false;
-    }
-    checkingPromise = (async function () {
       try {
-        const response = await apiFetch('/api/health', { method: 'GET', timeoutMs: forcedRemote ? 4000 : 1800 });
-        remoteAvailable = !!(response && response.ok);
-      } catch (e) {
-        remoteAvailable = false;
-        if (forcedRemote) console.error('KELO API health check failed:', e);
+        const res = await fetch(state.apiBase + '/health', {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+
+        if (res.status === 404) {
+          // Static deployment (current Vercel test): preserve prototype mode.
+          state.mode = 'local';
+          return state.mode;
+        }
+
+        if (res.ok) {
+          state.mode = 'server';
+          return state.mode;
+        }
+
+        // API exists but is unhealthy: do NOT silently fall back to a fake
+        // local database on production infrastructure.
+        state.mode = 'server-error';
+        state.lastError = new Error(`KELO API health check failed (${res.status})`);
+        return state.mode;
+      } catch (error) {
+        // file:// and static-only hosting have no same-origin API. In auto
+        // mode that is expected; in explicit server mode it is a real error.
+        if (state.requestedMode === 'server') {
+          state.mode = 'server-error';
+          state.lastError = error;
+          return state.mode;
+        }
+        state.mode = 'local';
+        state.lastError = error;
+        return state.mode;
       }
-      availabilityChecked = true;
-      return remoteAvailable;
     })();
-    return checkingPromise;
-  }
-
-  async function requireApi() {
-    const available = await checkApi();
-    if (!available) throw new Error('KELO backend is not available.');
-    return true;
-  }
-
-  function userForBrowser(user) {
-    if (!user) return null;
-    return {
-      id: user.id,
-      name: user.name || '',
-      phone: user.phone || '',
-      nationalId: user.nationalId || '',
-      profileCompleted: !!user.profileCompleted,
-      profile: user.profile && typeof user.profile === 'object' ? user.profile : {},
-      profileLocation: user.profileLocation && typeof user.profileLocation === 'object' ? user.profileLocation : null,
-      systemRoles: Array.isArray(user.systemRoles) ? user.systemRoles : []
-    };
+    return state.initPromise;
   }
 
   window.KeloBackend = {
-    get remoteAvailable() { return remoteAvailable; },
-    async bootstrap() { return checkApi(); },
-    async health() { return apiFetch('/api/health', { method: 'GET' }); },
-    async login(phone, nationalId, intent) {
-      await requireApi();
-      const response = await apiFetch('/api/auth/login', {
+    async init() { return init(); },
+    isServerMode() { return state.mode === 'server'; },
+    isServerError() { return state.mode === 'server-error'; },
+    getMode() { return state.mode; },
+    getApiBase() { return state.apiBase; },
+
+    async login(phone, nationalId, authMode) {
+      await init();
+      if (state.mode !== 'server') throw new Error('KELO server API is not active.');
+      return request('/auth/login', {
         method: 'POST',
-        body: { phone, nationalId, intent: intent || 'user' }
+        body: JSON.stringify({ phone, nationalId, authMode: authMode || 'public' })
       });
-      return Object.assign({}, response, { user: userForBrowser(response.user) });
     },
-    async getSession() {
-      await requireApi();
-      const response = await apiFetch('/api/auth/session', { method: 'GET' });
-      return Object.assign({}, response, { user: userForBrowser(response.user) });
+
+    async me() {
+      await init();
+      if (state.mode !== 'server') return null;
+      try {
+        return await request('/auth/me', { method: 'GET' });
+      } catch (error) {
+        if (error.status === 401) return null;
+        throw error;
+      }
     },
+
     async logout() {
-      if (!remoteAvailable) return { ok: true };
-      try { return await apiFetch('/api/auth/logout', { method: 'POST' }); }
-      catch (e) { console.warn('KELO remote logout failed:', e); return { ok: false }; }
+      await init();
+      if (state.mode !== 'server') return { ok: true, local: true };
+      return request('/auth/logout', { method: 'POST', body: '{}' });
     },
-    async updateCurrentUser(changes) {
-      await requireApi();
-      const response = await apiFetch('/api/me', { method: 'PATCH', body: changes || {} });
-      return userForBrowser(response.user);
+
+    async updateProfile(payload) {
+      await init();
+      if (state.mode !== 'server') throw new Error('KELO server API is not active.');
+      return request('/profile', {
+        method: 'PUT',
+        body: JSON.stringify(payload || {})
+      });
     }
   };
 })();

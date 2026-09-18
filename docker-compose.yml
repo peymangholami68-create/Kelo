@@ -4,30 +4,32 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: kelo
-      POSTGRES_USER: kelo_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: kelo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
-      - kelo_postgres_data:/var/lib/postgresql/data
+      - kelo_pgdata:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kelo_user -d kelo"]
+      test: ["CMD-SHELL", "pg_isready -U kelo -d kelo"]
       interval: 5s
       timeout: 5s
       retries: 20
 
-  app:
+  web:
     build: .
     restart: unless-stopped
-    env_file: .env
     environment:
-      DATABASE_URL: postgres://kelo_user:${POSTGRES_PASSWORD}@db:5432/kelo
-      PORT: 3000
       NODE_ENV: production
-      COOKIE_SECURE: "true"
+      PORT: 3000
+      DATABASE_URL: postgresql://kelo:${POSTGRES_PASSWORD:-change-me}@db:5432/kelo
+      DATABASE_SSL: "false"
+      SESSION_SECRET: ${SESSION_SECRET:-replace-this-secret}
+      NATIONAL_ID_ENCRYPTION_KEY: ${NATIONAL_ID_ENCRYPTION_KEY:-replace-this-64-hex-secret}
     depends_on:
       db:
         condition: service_healthy
-    expose:
-      - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
 
 volumes:
-  kelo_postgres_data:
+  kelo_pgdata:

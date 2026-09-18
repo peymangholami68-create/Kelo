@@ -1,29 +1,20 @@
-# KELO PostgreSQL / PostGIS
+# KELO PostgreSQL
 
-This is the active database source of truth for the VPS architecture.
+## Current step
+This native PostgreSQL layer implements real user persistence and server-side sessions for the VPS deployment.
 
-The schema uses PostgreSQL + PostGIS because Kelo's matching and map features depend on geographic points/areas.
+### Tables in this step
+- `users`
+- `profiles`
+- `user_roles`
+- `user_sessions`
 
-## Migration runner
+Commercial roles are not stored on a user. A single account can later create requests and/or service listings.
 
-Set `DATABASE_URL` and run:
-
+## Apply on a VPS
 ```bash
-npm run db:migrate
+export DATABASE_URL='postgresql://kelo:YOUR_PASSWORD@127.0.0.1:5432/kelo'
+psql "$DATABASE_URL" -f database/migrations/001_auth.sql
 ```
 
-Migrations are applied in filename order and tracked in `schema_migrations`.
-
-## Docker / VPS
-
-`docker compose up -d --build` starts:
-
-1. PostgreSQL/PostGIS
-2. a one-shot migration container
-3. the Kelo Node backend
-
-The migration container is deliberately separate from PostgreSQL's first-boot init scripts, so migration history remains explicit and repeatable.
-
-## Current browser limitation
-
-The UI is intentionally still in `mode=local` for Vercel testing. `localStorage` is not the production source of truth. The next integration phase will move authentication and business data behind the API.
+The session store uses the schema expected by `connect-pg-simple` and is also safe to be auto-created by the application if needed.

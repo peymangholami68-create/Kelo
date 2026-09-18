@@ -1,8 +1,9 @@
-# KELO config
+# Configuration
 
-`kelo-config.js` contains browser-safe configuration only.
+`config/kelo-config.js` فقط تنظیمات عمومی اجرای Frontend را دارد و هیچ secret واقعی نباید در آن قرار بگیرد.
 
-- `backendMode: 'auto'` => use `/api/*` when the VPS backend responds; otherwise keep local demo mode.
-- `apiBaseUrl: ''` => same-origin API in production (`kelo.ir/api/...`).
+- `mode: auto` برای همان Repository مشترک بین Vercel Test و VPS Production است.
+- در Vercel که `/api/health` وجود ندارد، برنامه به Prototype محلی fallback می‌کند.
+- روی VPS که `/api/health` موجود است، Login/Session واقعی فعال می‌شود.
 
-No database URL, password or service secret belongs here.
+Secretهای Backend فقط در `.env` روی VPS قرار می‌گیرند و `.env` نباید وارد GitHub شود.

@@ -7,41 +7,44 @@ Kelo یک حساب کاربری واحد دارد. کاربر هنگام ورو�
 - ثبت Request => کاربر در آن transaction درخواست‌دهنده است.
 - ثبت Service Listing / Machine => کاربر در آن transaction ارائه‌دهنده است.
 - یک حساب می‌تواند هر دو نوع فعالیت را داشته باشد.
-- فقط نقش‌های سیستمی مانند admin/support/superadmin برای authorization نگهداری می‌شوند.
+- فقط نقش‌های سیستمی مانند `admin` / `support` / `superadmin` برای authorization نگهداری می‌شوند.
 
 ## Deployment model
 
-### Development / preview
+### Current test
+```text
+GitHub → Vercel → kelo-marketplace.vercel.app
+```
+Vercel در این مرحله فقط برای تست نسخه استاتیک استفاده می‌شود.
 
-- GitHub: source control
-- Vercel: preview / UI testing
-- اگر `/api/health` در دسترس نباشد، UI به local demo fallback می‌کند.
+### Target production
+```text
+kelo.ir → VPS → Nginx → Node/Express → PostgreSQL
+```
 
-### Production target
+## Authentication flow
 
-- Domain: `kelo.ir`
-- Nginx: TLS termination + reverse proxy
-- Node/Express: frontend host + API
-- PostgreSQL: persistent data
+```text
+Browser
+  → POST /api/auth/login
+  → Express
+  → PostgreSQL users/profiles
+  → server-side session in user_sessions
+  → HttpOnly cookie: kelo.sid
+```
 
-## Authentication phase
+در Production، session و User منبع حقیقت سمت سرور هستند و `localStorage` منبع احراز هویت نیست.
 
-Current phase is the first real persistence step:
+## Current frontend compatibility
 
-`Login → Server Session Cookie → users table → PostgreSQL`
+`backend/kelo-backend.js` ابتدا `/api/health` را بررسی می‌کند:
 
-- session token is random and stored hashed in PostgreSQL.
-- browser receives only an HttpOnly cookie.
-- profile updates go to `/api/me` and PostgreSQL.
-- commercial roles remain context-based, not account-level.
+- اگر API در دسترس باشد → حالت `server` و Login واقعی فعال می‌شود.
+- اگر API اصلاً وجود نداشته باشد (نسخه استاتیک فعلی Vercel) → حالت `local` و Prototype فعلی حفظ می‌شود.
+- اگر API وجود داشته باشد ولی unhealthy باشد → fallback به دیتابیس جعلی انجام نمی‌شود.
 
-The current UI still uses phone + national ID to avoid changing the existing form. Production OTP/SMS is a separate next step.
+## Current authentication credential
 
-## Later phases
+UI فعلی به‌منظور حفظ ظاهر و جریان موجود همچنان شماره موبایل + کد ملی را می‌گیرد. کد ملی در Backend به‌صورت lookup HMAC + verifier کند + ciphertext رمزگذاری‌شده نگهداری می‌شود.
 
-1. OTP/SMS
-2. Domain tables for machines/listings/requests/bookings/deals
-3. Atomic acceptance in PostgreSQL
-4. Payment gateway
-5. Admin panel
-6. notifications, audit, monitoring, backups
+برای انتشار عمومی Kelo، مرحله بعدی تبدیل ورود به SMS OTP است؛ session architecture فعلی حفظ می‌شود.

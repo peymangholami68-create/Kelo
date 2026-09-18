@@ -68,7 +68,7 @@ function saveWizardDraftDebounced(){ clearTimeout(_draftSaveTimer); _draftSaveTi
 function clearWizardDraft(){ if(!currentUser) return; try{ localStorage.removeItem(DRAFT_PREFIX + currentUser.id); }catch(e){} }
 function saveSession(){
     try{
-        if(window.KeloBackend && window.KeloBackend.remoteAvailable){
+        if(window.KeloBackend && window.KeloBackend.isServerMode()){
             localStorage.removeItem(SESSION_KEY);
             return;
         }
@@ -76,7 +76,10 @@ function saveSession(){
     }catch(e){}
 }
 function clearSession(){
-    try{ localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(TAB_KEY); }catch(e){}
+    try{
+        localStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(TAB_KEY);
+    }catch(e){}
 }
 function setAppActive(active){
     if(active){ document.documentElement.classList.add('kelo-app-active'); document.body.classList.add('kelo-app-active'); }
@@ -192,6 +195,48 @@ function initializeDB(){
 let db=initializeDB();
 let currentUser=null;
 
+function upsertAuthenticatedUserMirror(user){
+    if(!user || !user.id) return user;
+    let local = db.users.find(function(u){ return String(u.id) === String(user.id); });
+    if(!local){
+        local = {};
+        db.users.push(local);
+    }
+    Object.assign(local, cloneObject(user));
+    if(!Array.isArray(local.systemRoles)) local.systemRoles=[];
+    if(!local.profile) local.profile={};
+    return local;
+}
+
+function enterAuthenticatedUser(user, options){
+    options = options || {};
+    currentUser = upsertAuthenticatedUserMirror(user);
+    saveSession();
+    closeLogin();
+    const landing=document.getElementById("landing");
+    const app=document.getElementById("app");
+    if(landing) landing.classList.add("hidden");
+    if(app) app.classList.remove("hidden");
+    setAppActive(true);
+    if(!currentUser.profileCompleted){
+        showCompleteProfile();
+    } else if(options.render !== false){
+        renderApp();
+    }
+}
+
+function getBackendUserPayload(extra){
+    const e = extra || {};
+    return {
+        name: e.name !== undefined ? e.name : (currentUser ? currentUser.name : ''),
+        phone: e.phone !== undefined ? e.phone : (currentUser ? currentUser.phone : ''),
+        nationalId: e.nationalId !== undefined ? e.nationalId : (currentUser ? currentUser.nationalId : ''),
+        profileCompleted: e.profileCompleted !== undefined ? !!e.profileCompleted : !!(currentUser && currentUser.profileCompleted),
+        profile: cloneObject(e.profile !== undefined ? e.profile : ((currentUser && currentUser.profile) || {})),
+        profileLocation: e.profileLocation !== undefined ? cloneObject(e.profileLocation) : (currentUser && currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null)
+    };
+}
+
 function makeEmptyWizard(){
     return {
         step:1, type:null, service:null, data:{},
@@ -232,75 +277,11 @@ function normalizePhone(value){ let p=normalizeDigits(value).replace(/\s+/g,"").
 function normalizeNationalId(value){ return normalizeDigits(value).replace(/\D/g,"").trim(); }
 function showAuthError(message){ const box=document.getElementById("authError"); if(!box){ showToast(message,'error'); return; } box.textContent=message; box.style.display="block"; }
 function clearAuthError(){ const box=document.getElementById("authError"); if(box){ box.textContent=""; box.style.display="none"; } }
-function openLogin(){
-    authMode="public";
-    const modal=document.getElementById("loginModal");
-    if(modal) modal.classList.remove("hidden");
-    const title=modal ? modal.querySelector(".modal-head h2") : null;
-    if(title) title.textContent="ورود یا ثبت نام";
-    clearAuthError();
-}
-function openAdminLogin(){
-    authMode="admin";
-    const modal=document.getElementById("loginModal");
-    if(modal) modal.classList.remove("hidden");
-    const title=modal ? modal.querySelector(".modal-head h2") : null;
-    if(title) title.textContent="ورود مدیریت";
-    clearAuthError();
-}
-function closeLogin(){
-    const modal=document.getElementById("loginModal");
-    if(modal) modal.classList.add("hidden");
-    const phone=document.getElementById("loginPhone"), nid=document.getElementById("loginNationalId");
-    if(phone)phone.value=""; if(nid)nid.value="";
-    clearAuthError();
-}
+function openLogin(){ authMode="public"; const modal=document.getElementById("loginModal"); if(modal) modal.classList.remove("hidden"); clearAuthError(); }
+function openAdminLogin(){ authMode="admin"; const modal=document.getElementById("loginModal"); if(modal) modal.classList.remove("hidden"); const title=modal ? modal.querySelector(".modal-head h2") : null; if(title) title.textContent="ورود مدیریت"; clearAuthError(); }
+function closeLogin(){ const modal=document.getElementById("loginModal"); if(modal) modal.classList.add("hidden"); const phone=document.getElementById("loginPhone"), nid=document.getElementById("loginNationalId"); if(phone)phone.value=""; if(nid)nid.value=""; clearAuthError(); }
 function ensureSystemRoles(user){ if(!user) return []; if(!Array.isArray(user.systemRoles)) user.systemRoles=[]; return user.systemRoles; }
 function isAdmin(user){ return !!user && ensureSystemRoles(user).includes("admin"); }
-function activateRemoteUserCache(){
-    try{
-        db.users = [];
-        const snapshot=cloneObject(db);
-        snapshot.users=[];
-        localStorage.setItem('kelo_db', JSON.stringify(snapshot));
-    }catch(e){}
-}
-function syncRemoteUserIntoLocalCache(user){
-    if(!user) return;
-    const existing=db.users.find(u=>u.id===user.id);
-    const cached={
-        id:user.id,
-        name:user.name||"",
-        phone:user.phone||"",
-        profileCompleted:!!user.profileCompleted,
-        profile:cloneObject(user.profile||{}),
-        profileLocation:user.profileLocation?cloneObject(user.profileLocation):null,
-        systemRoles:cloneObject(user.systemRoles||[])
-    };
-    if(existing) Object.assign(existing,cached); else db.users.push(cached);
-    if(window.KeloBackend && window.KeloBackend.remoteAvailable){
-        // Do not persist national ID into browser storage in remote mode.
-        try{
-            const snapshot=cloneObject(db);
-            snapshot.users=(snapshot.users||[]).map(u=>{ const x=Object.assign({},u); delete x.nationalId; return x; });
-            localStorage.setItem('kelo_db', JSON.stringify(snapshot));
-        }catch(e){}
-    }
-}
-function enterAuthenticatedApp(user, options){
-    options=options||{};
-    currentUser=user;
-    syncRemoteUserIntoLocalCache(user);
-    if(!options.skipSessionSave) saveSession();
-    closeLogin();
-    const landing=document.getElementById("landing"), app=document.getElementById("app");
-    if(landing) landing.classList.add("hidden");
-    if(app) app.classList.remove("hidden");
-    setAppActive(true);
-    const preStyle=document.getElementById('keloPreloadHideLanding'); if(preStyle) preStyle.remove();
-    if(!currentUser.profileCompleted) showCompleteProfile();
-    else renderApp();
-}
 async function login(e){
     e.preventDefault(); clearAuthError();
     const phone=normalizePhone(document.getElementById("loginPhone").value);
@@ -308,16 +289,25 @@ async function login(e){
     if(!/^09\d{9}$/.test(phone)){ showAuthError("شماره تلفن همراه معتبر نیست."); return; }
     if(!/^\d{10}$/.test(nationalId)){ showAuthError("کد ملی باید ۱۰ رقم باشد."); return; }
 
-    if(window.KeloBackend){
+    if(window.KeloBackend && window.KeloBackend.isServerError()){
+        showAuthError('ارتباط با سرور کِلو برقرار نشد. لطفاً دوباره تلاش کنید.');
+        return;
+    }
+
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            const apiAvailable = await window.KeloBackend.bootstrap();
-            if(apiAvailable){
-                const result=await window.KeloBackend.login(phone,nationalId,authMode);
-                enterAuthenticatedApp(result.user);
+            const result = await window.KeloBackend.login(phone, nationalId, authMode);
+            if(result && result.user){
+                enterAuthenticatedUser(result.user, { created: !!result.created });
                 return;
             }
-        }catch(error){
-            showAuthError(error.message || 'ورود انجام نشد.');
+            showAuthError('ورود انجام نشد.');
+            return;
+        }catch(err){
+            const msg = err && err.status === 401
+                ? (authMode === 'admin' ? 'اطلاعات ورود مدیر صحیح نیست.' : 'شماره همراه یا کد ملی صحیح نیست.')
+                : ((err && err.body && err.body.error) || 'خطا در ارتباط با سرور.');
+            showAuthError(msg);
             return;
         }
     }
@@ -326,45 +316,32 @@ async function login(e){
     const existing=db.users.find(u=>normalizePhone(u.phone)===phone);
     if(existing){
         if(normalizeNationalId(existing.nationalId)!==nationalId){ showAuthError("این شماره همراه قبلاً با کد ملی دیگری ثبت شده است."); return; }
-        currentUser=existing; saveSession(); closeLogin();
-        document.getElementById("landing").classList.add("hidden");
-        document.getElementById("app").classList.remove("hidden");
-        setAppActive(true);
-        if(!currentUser.profileCompleted) showCompleteProfile(); else renderApp();
+        enterAuthenticatedUser(existing);
         return;
     }
     const duplicate=db.users.find(u=>normalizeNationalId(u.nationalId)===nationalId);
     if(duplicate){ showAuthError("این کد ملی قبلاً ثبت شده است."); return; }
     const newUser={ id:"u_"+Date.now()+"_"+Math.random().toString(36).slice(2,8), name:"", phone, nationalId, profileCompleted:false, profile:{} };
-    db.users.push(newUser); saveDB(); currentUser=newUser; saveSession(); closeLogin();
-    document.getElementById("landing").classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
-    setAppActive(true);
-    showCompleteProfile();
+    db.users.push(newUser); saveDB(); enterAuthenticatedUser(newUser, { render:false }); showCompleteProfile();
 }
 async function adminLoginValues(phone,nationalId){
-    if(window.KeloBackend){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            const apiAvailable=await window.KeloBackend.bootstrap();
-            if(apiAvailable){
-                const result=await window.KeloBackend.login(phone,nationalId,'admin');
-                enterAuthenticatedApp(result.user);
-                return;
-            }
-        }catch(error){ showAuthError(error.message || 'ورود مدیریت انجام نشد.'); return; }
+            const result = await window.KeloBackend.login(phone, nationalId, 'admin');
+            if(result && result.user){ enterAuthenticatedUser(result.user); return; }
+            showAuthError('اطلاعات ورود مدیر صحیح نیست.');
+        }catch(err){ showAuthError('اطلاعات ورود مدیر صحیح نیست.'); }
+        return;
     }
     const admin=db.users.find(u=>isAdmin(u) && normalizePhone(u.phone)===phone);
     if(!admin || normalizeNationalId(admin.nationalId)!==nationalId){ showAuthError("اطلاعات ورود مدیر صحیح نیست."); return; }
-    currentUser=admin; saveSession(); closeLogin();
-    document.getElementById("landing").classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
-    setAppActive(true);
-    renderApp();
+    enterAuthenticatedUser(admin);
 }
 async function logout(){
-    closeMobileAccountSheet();
-    if(window.KeloBackend && window.KeloBackend.remoteAvailable){ await window.KeloBackend.logout(); }
-    currentUser=null; clearSession();
+    try{
+        if(window.KeloBackend && window.KeloBackend.isServerMode()) await window.KeloBackend.logout();
+    }catch(e){ console.warn('KELO logout API failed', e); }
+    closeMobileAccountSheet(); currentUser=null; clearSession();
     const app=document.getElementById("app"), landing=document.getElementById("landing"), modal=document.getElementById("loginModal");
     if(app)app.classList.add("hidden"); if(landing)landing.classList.remove("hidden"); if(modal)modal.classList.add("hidden");
     setAppActive(false);
@@ -424,38 +401,35 @@ function showCompleteProfile(){
 
 async function saveFirstProfile(e){
     e.preventDefault();
+    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user) return;
     const nameEl = document.getElementById('firstProfileName');
     const name = (nameEl ? nameEl.value : '').trim();
     if(!name || name.length < 2){ showToast('نام و نام خانوادگی را وارد کنید.', 'error'); return; }
 
-    let user = currentUser;
-    user.profile = user.profile || {};
-    if(wizard._pendingProfileLocation){
-        user.profileLocation = cloneObject(wizard._pendingProfileLocation);
-        if(user.profileLocation.city) user.profile.city = user.profileLocation.city;
-        if(user.profileLocation.province) user.profile.province = user.profileLocation.province;
+    const profile = Object.assign({}, currentUser.profile || {});
+    const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
+    if(profileLocation){
+        if(profileLocation.city) profile.city = profileLocation.city;
+        if(profileLocation.province) profile.province = profileLocation.province;
     }
-    user.name = name;
-    user.profileCompleted = true;
 
-    if(window.KeloBackend && window.KeloBackend.remoteAvailable){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            user = await window.KeloBackend.updateCurrentUser({
-                name:user.name,
-                phone:user.phone,
-                nationalId:user.nationalId,
-                profileCompleted:true,
-                profile:user.profile,
-                profileLocation:user.profileLocation || null
-            });
-        }catch(error){ showToast(error.message || 'ذخیره اطلاعات انجام نشد.','error'); return; }
-    } else {
-        const localUser=db.users.find(u=>u.id===currentUser.id);
-        if(localUser) Object.assign(localUser,user);
+            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, profile, profileLocation, profileCompleted:true }));
+            currentUser = upsertAuthenticatedUserMirror(updated.user || updated);
+        }catch(err){
+            showToast((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.','error');
+            return;
+        }
+    }else{
+        user.name = name;
+        user.profile = profile;
+        if(profileLocation) user.profileLocation = profileLocation;
+        user.profileCompleted = true;
         saveDB();
+        currentUser = user;
     }
-    currentUser = user;
-    syncRemoteUserIntoLocalCache(user);
+
     wizard._pendingProfileLocation = null;
     wizard._profileAutoGeoRequested = false;
     document.getElementById('avatar').innerText = currentUser.name;
@@ -500,45 +474,43 @@ function updateProfileCities(){
 }
 async function saveProfile(e){
     e.preventDefault();
+    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user)return;
     const name=document.getElementById("pName").value.trim();
     const province=document.getElementById("pProvince").value;
     const city=document.getElementById("pCity").value;
     const village=document.getElementById("pVillage").value.trim();
     if(!name || name.length<2){ showToast('نام کامل را وارد کنید.','error'); return; }
     if(!city){ showToast('شهر را انتخاب کنید.','error'); return; }
+    const profile={province,city,village:village||""};
 
-    let user=currentUser;
-    user.name=name;
-    user.profile={province,city,village:village||""};
-    user.profileCompleted=true;
-    if(window.KeloBackend && window.KeloBackend.remoteAvailable){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            user=await window.KeloBackend.updateCurrentUser({
-                name:user.name,
-                phone:user.phone,
-                nationalId:user.nationalId,
-                profileCompleted:true,
-                profile:user.profile,
-                profileLocation:user.profileLocation || null
-            });
-        }catch(error){ showToast(error.message || 'ذخیره اطلاعات انجام نشد.','error'); return; }
-    } else {
-        const localUser=db.users.find(u=>u.id===currentUser.id);
-        if(localUser) Object.assign(localUser,user);
-        saveDB();
+            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, profile, profileCompleted:true }));
+            currentUser = upsertAuthenticatedUserMirror(updated.user || updated);
+        }catch(err){
+            showToast((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.','error');
+            return;
+        }
+    }else{
+        user.name=name; user.profile=profile; user.profileCompleted=true;
+        saveDB(); currentUser=user;
     }
-    currentUser=user;
-    syncRemoteUserIntoLocalCache(user);
+
     document.getElementById("avatar").innerText=currentUser.name;
     updateMobileAccountIdentity();
     const sheetOpen = document.getElementById('mobileAccountBackdrop') && document.getElementById('mobileAccountBackdrop').classList.contains('open');
-    if(sheetOpen){ renderMobileAccountSection('profile'); return; }
+    if(sheetOpen){
+        renderMobileAccountSection('profile');
+        return;
+    }
     const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.remove('hidden');
-    const app=document.getElementById('app'); if(app) app.classList.remove('mobile-tab-profile-edit');
+    const app=document.getElementById('app');
+    if(app) app.classList.remove('mobile-tab-profile-edit');
     renderApp();
 }
 async function saveProfileEdit(e){
     e.preventDefault();
+    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user)return;
     const nameEl=document.getElementById('editName');
     const phoneEl=document.getElementById('editPhone');
     const nidEl=document.getElementById('editNationalId');
@@ -551,33 +523,33 @@ async function saveProfileEdit(e){
     if(!/^09\d{9}$/.test(phone)){ showToast('شماره همراه معتبر نیست.','error'); return; }
     if(!/^\d{10}$/.test(nid)){ showToast('کد ملی باید ۱۰ رقم باشد.','error'); return; }
 
-    let user=currentUser;
-    user.name=name; user.phone=phone; user.nationalId=nid; user.profileCompleted=true;
-    if(wizard._pendingProfileLocation){
-        user.profileLocation=cloneObject(wizard._pendingProfileLocation);
-        user.profile=user.profile||{};
-        if(user.profileLocation.city) user.profile.city=user.profileLocation.city;
-        if(user.profileLocation.province) user.profile.province=user.profileLocation.province;
+    const profile=Object.assign({}, currentUser.profile || {});
+    const profileLocation=wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
+    if(profileLocation){
+        if(profileLocation.city) profile.city=profileLocation.city;
+        if(profileLocation.province) profile.province=profileLocation.province;
     }
 
-    if(window.KeloBackend && window.KeloBackend.remoteAvailable){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            user=await window.KeloBackend.updateCurrentUser({
-                name:user.name,
-                phone:user.phone,
-                nationalId:user.nationalId,
-                profileCompleted:true,
-                profile:user.profile||{},
-                profileLocation:user.profileLocation || null
-            });
-        }catch(error){ showToast(error.message || 'ذخیره اطلاعات انجام نشد.','error'); return; }
-    } else {
-        const localUser=db.users.find(u=>u.id===currentUser.id);
-        if(localUser) Object.assign(localUser,user);
-        saveDB();
+            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, phone, nationalId:nid, profile, profileLocation, profileCompleted:true }));
+            currentUser=upsertAuthenticatedUserMirror(updated.user || updated);
+        }catch(err){
+            const msg = err && err.status === 409 ? ((err.body && err.body.error) || 'این شماره همراه یا کد ملی قبلاً ثبت شده است.') : ((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.');
+            showToast(msg,'error');
+            return;
+        }
+    }else{
+        const dupPhone=db.users.find(u=>String(u.id)!==String(user.id) && normalizePhone(u.phone)===phone);
+        if(dupPhone){ showToast('این شماره همراه قبلاً ثبت شده است.','error'); return; }
+        const dupNid=db.users.find(u=>String(u.id)!==String(user.id) && normalizeNationalId(u.nationalId)===nid);
+        if(dupNid){ showToast('این کد ملی قبلاً ثبت شده است.','error'); return; }
+        user.name=name; user.phone=phone; user.nationalId=nid; user.profileCompleted=true;
+        user.profile=profile;
+        if(profileLocation) user.profileLocation=profileLocation;
+        saveDB(); currentUser=user;
     }
-    currentUser=user;
-    syncRemoteUserIntoLocalCache(user);
+
     document.getElementById('avatar').innerText=currentUser.name;
     wizard._pendingProfileLocation=null;
     showToast('اطلاعات ذخیره شد','success');
@@ -2742,53 +2714,52 @@ document.addEventListener('keydown', function(e){
     if(acc && acc.classList.contains('open')){ closeMobileAccountSheet(); return; }
 });
 
-document.addEventListener('DOMContentLoaded',async function(){
+document.addEventListener('DOMContentLoaded', async function(){
     document.querySelectorAll('img').forEach(img=>{ const localSrc=img.getAttribute('src')||''; const parts=localSrc.split('/'); const filename=parts[parts.length-1].split('?')[0]; const externalUrl=driveImageMap[filename]; if(externalUrl){ img.dataset.fallbackExternal=externalUrl; img.src=localSrc; img.onerror=function(){ if(this.dataset.fallbackExternal && !this.dataset.triedExternal){ this.dataset.triedExternal='true'; this.src=this.dataset.fallbackExternal; }else this.style.background='#dfe7cc'; }; } });
 
-    const finishLocalBootstrap = function(){
-        try{
-            const savedId = localStorage.getItem(SESSION_KEY);
-            if(savedId){
-                const u = db.users.find(x => x.id === savedId);
-                if(u){
-                    currentUser = u;
-                    document.getElementById("landing").classList.add("hidden");
-                    document.getElementById("app").classList.remove("hidden");
-                    setAppActive(true);
-                    if(!currentUser.profileCompleted){ showCompleteProfile(); }
-                    else {
-                        const savedTab = sessionStorage.getItem(TAB_KEY) || 'home';
-                        window.__keloMobileTab = savedTab;
-                        setMobileTab(savedTab);
-                    }
-                    return true;
-                }
-            }
-        }catch(e){}
-        const preStyle = document.getElementById('keloPreloadHideLanding');
-        if(preStyle) preStyle.remove();
-        return false;
-    };
-
     try{
-        const apiAvailable = window.KeloBackend ? await window.KeloBackend.bootstrap() : false;
-        if(apiAvailable){
-            activateRemoteUserCache();
-            try{
-                const session = await window.KeloBackend.getSession();
-                if(session && session.authenticated && session.user){
-                    enterAuthenticatedApp(session.user, {skipSessionSave:true});
-                } else {
-                    const preStyle=document.getElementById('keloPreloadHideLanding'); if(preStyle) preStyle.remove();
-                }
-            }catch(error){
-                const preStyle=document.getElementById('keloPreloadHideLanding'); if(preStyle) preStyle.remove();
+        await window.KeloBackend.init();
+
+        if(window.KeloBackend.isServerMode()){
+            const serverUser = await window.KeloBackend.me();
+            const preStyle = document.getElementById('keloPreloadHideLanding');
+            if(preStyle) preStyle.remove();
+            if(serverUser){
+                enterAuthenticatedUser(serverUser);
+            }else{
+                const landing=document.getElementById('landing');
+                const app=document.getElementById('app');
+                if(app) app.classList.add('hidden');
+                if(landing) landing.classList.remove('hidden');
+            }
+            return;
+        }
+
+        if(window.KeloBackend.isServerError()){
+            const preStyle = document.getElementById('keloPreloadHideLanding');
+            if(preStyle) preStyle.remove();
+            showToast('سرویس داده کِلو در دسترس نیست.','error');
+            return;
+        }
+
+        const savedId = localStorage.getItem(SESSION_KEY);
+        if(savedId){
+            const u = db.users.find(x => x.id === savedId);
+            if(u){
+                enterAuthenticatedUser(u);
+            } else {
+                const preStyle = document.getElementById('keloPreloadHideLanding');
+                if(preStyle) preStyle.remove();
             }
         } else {
-            finishLocalBootstrap();
+            const preStyle = document.getElementById('keloPreloadHideLanding');
+            if(preStyle) preStyle.remove();
         }
-    }catch(error){
-        finishLocalBootstrap();
+    }catch(e){
+        const preStyle = document.getElementById('keloPreloadHideLanding');
+        if(preStyle) preStyle.remove();
+        console.error('KELO auth bootstrap failed', e);
+        showToast('خطا در راه‌اندازی ورود کِلو.','error');
     }
 });
 

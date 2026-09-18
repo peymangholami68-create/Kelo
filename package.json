@@ -1,22 +1,21 @@
 {
-  "name": "kelo-marketplace",
+  "name": "kelo",
   "version": "1.0.0",
   "private": true,
-  "description": "KELO agricultural services marketplace - VPS production foundation",
-  "main": "server/index.js",
+  "description": "KELO | بازار خدمات کشاورزی",
+  "main": "server/app.js",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
-    "db:migrate": "node server/migrate.js",
-    "admin:create": "node server/create-admin.js",
-    "check": "node --check server/index.js && node --check server/auth.js && node --check server/migrate.js && node --check server/create-admin.js && node --check backend/kelo-backend.js && node --check js/app.js"
+    "start": "node server/app.js",
+    "check": "node --check server/app.js && node --check backend/kelo-backend.js && node --check js/app.js",
+    "db:apply": "psql \"$DATABASE_URL\" -f database/migrations/001_auth.sql"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "dotenv": "17.4.2",
+    "connect-pg-simple": "10.0.0",
     "express": "5.2.1",
+    "express-session": "1.19.0",
     "pg": "8.23.0"
   }
 }

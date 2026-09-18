@@ -1,71 +1,109 @@
 # KELO | بازار خدمات کشاورزی
 
-این نسخه، مبنای Production کِلو برای استقرار روی VPS است و از UI فعلی `Final_1_osm_fixed2` ساخته شده است.
+این Repository نسخه‌ی چندفایلی Kelo است و اکنون مرحله‌ی **Login → Session → Users → PostgreSQL** به‌صورت واقعی برای استقرار روی VPS آماده شده است.
 
-## مدل حساب کاربری
+## معماری
 
-کِلو فقط **یک حساب کاربری** دارد. در زمان ورود، کاربر نقش «کشاورز» یا «ماشین‌دار» انتخاب نمی‌کند.
-
-- ثبت درخواست => کاربر در آن تراکنش درخواست‌دهنده است.
-- ثبت ماشین/ارائه خدمت => کاربر در آن تراکنش ارائه‌دهنده است.
-- یک حساب می‌تواند هر دو فعالیت را داشته باشد.
-- فقط نقش‌های سیستمی مانند `admin` برای authorization نگهداری می‌شوند.
-
-## وضعیت فعلی
-
-- UI اصلی حفظ شده است.
-- Login/Session/Users به Backend واقعی متصل شده‌اند.
-- در Production، session به‌صورت HttpOnly cookie مدیریت می‌شود و session در PostgreSQL نگهداری می‌شود.
-- `users` و `sessions` در PostgreSQL قرار دارند.
-- Profile و profileLocation از طریق `/api/me` در PostgreSQL ذخیره می‌شوند.
-- در Vercel preview اگر API در دسترس نباشد، برنامه برای تست UI به حالت local برمی‌گردد.
-- OTP واقعی هنوز مرحله بعدی است؛ UI فعلی همچنان شماره موبایل + کد ملی را می‌گیرد تا مسیر فعلی بدون بازطراحی حفظ شود.
-
-## Production architecture
-
+### تست فعلی
 ```text
 GitHub
   ↓
-Vercel (current preview/test)
+Vercel
+  ↓
+kelo-marketplace.vercel.app
+```
 
-Production:
+### هدف Production
+```text
 kelo.ir
-  ↓
+   ↓
 Nginx
-  ↓
-Node / Express API
-  ↓
+   ↓
+Node / Express
+   ↓
 PostgreSQL
 ```
 
-فایل‌ها:
+## مدل حساب کاربری
+
+Kelo فقط یک حساب کاربری دارد. در هنگام ورود، کاربر farmer/provider انتخاب نمی‌کند.
+
+- ایجاد Request → نقش کاربر در آن معامله «درخواست‌دهنده» است.
+- ایجاد Machine / Service Listing → نقش کاربر در آن فعالیت «ارائه‌دهنده» است.
+- یک حساب می‌تواند هر دو را داشته باشد.
+- فقط System Roleهایی مانند admin برای authorization وجود دارند.
+
+## Login واقعی
+
+UI فعلی تغییر اساسی نکرده و همچنان شماره موبایل + کد ملی را می‌گیرد. در VPS:
 
 ```text
-server/index.js       API + static host
-server/auth.js        Session/cookie/auth logic
-server/db.js          PostgreSQL pool
-server/migrate.js     Migration runner
-server/create-admin.js Admin bootstrap
-
-database/migrations/  SQL migrations
-nginx/                 Reverse proxy example
+POST /api/auth/login
+       ↓
+PostgreSQL users + profiles
+       ↓
+server-side session
+       ↓
+HttpOnly cookie: kelo.sid
 ```
 
-برای وب‌اپلیکیشن، `node-postgres` با connection pool استفاده شده است؛ pool الگوی توصیه‌شده برای queryهای متعدد و همزمان است. citeturn342144search0turn342144search1
+Session در PostgreSQL نگهداری می‌شود و Browser فقط session ID را در cookie دارد. `express-session` برای production با store سمت سرور طراحی شده و `connect-pg-simple` session table مبتنی بر PostgreSQL را فراهم می‌کند.
 
-## راه‌اندازی روی VPS
+## رفتار مشترک Vercel و VPS
 
-1. PostgreSQL را آماده کنید یا `docker-compose.yml` را اجرا کنید.
-2. `.env.example` را به `.env` تبدیل و مقدارهای واقعی را وارد کنید.
-3. `npm install`
-4. `npm run db:migrate`
-5. برای ساخت مدیر: متغیرهای `KELO_ADMIN_NAME`, `KELO_ADMIN_PHONE`, `KELO_ADMIN_NATIONAL_ID` را موقتاً در محیط اجرای دستور قرار دهید و `npm run admin:create` را اجرا کنید.
-6. `npm start`
-7. Nginx را طبق `nginx/kelo.conf.example` تنظیم کنید و HTTPS را فعال کنید.
+`backend/kelo-backend.js` ابتدا `/api/health` را بررسی می‌کند:
 
-## نکته امنیتی
+- **API موجود** → Login واقعی و PostgreSQL.
+- **API اصلاً وجود ندارد** → Prototype `localStorage` برای تست Vercel.
+- **API وجود دارد ولی unhealthy است** → خطا؛ برنامه به دیتابیس جعلی fallback نمی‌کند.
 
-- `.env` نباید وارد GitHub شود.
-- session در `HttpOnly` cookie است؛ JavaScript مرورگر token session را نمی‌بیند.
-- `service_role` یا پسورد دیتابیس نباید در Frontend قرار بگیرد.
-- OTP واقعی در مرحله بعد جایگزین ورود فعلی خواهد شد.
+بنابراین یک Repository می‌تواند برای هر دو محیط استفاده شود، بدون بازنویسی UI.
+
+## دیتابیس فعلی
+
+Migration فعلی:
+
+```text
+database/migrations/001_auth.sql
+```
+
+جداول:
+
+```text
+users
+profiles
+user_roles
+user_sessions
+```
+
+کد ملی:
+- `national_id_lookup` = HMAC برای uniqueness/lookup
+- `national_id_verifier` = verifier کند برای احراز
+- `national_id_ciphertext` = نسخه رمزگذاری‌شده برای زمانی که UI به مقدار نیاز دارد
+
+## نصب روی VPS
+
+### Docker
+
+```bash
+cp .env.example .env
+# secretها را با مقادیر تصادفی واقعی جایگزین کنید
+docker compose up --build -d
+```
+
+### بدون Docker
+
+```bash
+npm install
+export DATABASE_URL='postgresql://kelo:YOUR_PASSWORD@127.0.0.1:5432/kelo'
+export SESSION_SECRET='LONG_RANDOM_SECRET'
+export NATIONAL_ID_ENCRYPTION_KEY='64_HEX_CHAR_SECRET'
+psql "$DATABASE_URL" -f database/migrations/001_auth.sql
+npm start
+```
+
+## نکته مهم برای Production
+
+UI فعلی برای حفظ نسخه موجود هنوز **شماره موبایل + کد ملی** را به‌عنوان ورودی Login می‌گیرد. این مرحله اتصال واقعی PostgreSQL/Session را کامل می‌کند؛ برای انتشار عمومی، قدم بعدی باید جایگزینی کد ملی در Login با **SMS OTP** باشد.
+
+هیچ `.env` واقعی، Password یا Secret نباید وارد GitHub شود؛ فقط `.env.example` باید در Repository باقی بماند.

@@ -1,62 +1,67 @@
--- KELO VPS authentication foundation
--- One commercial user account; only system roles are security roles.
+-- KELO native PostgreSQL auth foundation (VPS deployment).
+-- One business account can later create requests and/or service listings.
+-- Commercial roles are intentionally NOT stored on the user account.
 
-create extension if not exists pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-create table if not exists kelo_migrations (
-  id text primary key,
-  applied_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone varchar(11) NOT NULL,
+  national_id_lookup char(64) NOT NULL,
+  national_id_verifier text NOT NULL,
+  national_id_ciphertext text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table if not exists users (
-  id uuid primary key default gen_random_uuid(),
-  name text not null default '',
-  phone varchar(11) not null unique,
-  national_id varchar(10) not null unique,
-  profile_completed boolean not null default false,
-  profile jsonb not null default '{}'::jsonb,
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON users(phone);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_national_id_lookup ON users(national_id_lookup);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  full_name text NOT NULL DEFAULT '',
+  province text,
+  city text,
+  village text,
   profile_location jsonb,
-  system_roles text[] not null default '{}',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  profile_completed boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table if not exists sessions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id) on delete cascade,
-  token_hash char(64) not null unique,
-  expires_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  last_seen_at timestamptz not null default now(),
-  ip_address inet,
-  user_agent text
+CREATE TABLE IF NOT EXISTS user_roles (
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role varchar(32) NOT NULL CHECK (role IN ('admin','support','superadmin')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, role)
 );
 
-create table if not exists audit_logs (
-  id bigint generated always as identity primary key,
-  actor_id uuid references users(id) on delete set null,
-  action text not null,
-  entity_type text not null,
-  entity_id uuid,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS user_sessions (
+  sid varchar NOT NULL PRIMARY KEY,
+  sess json NOT NULL,
+  expire timestamp(6) NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expire ON user_sessions(expire);
 
-create index if not exists idx_sessions_user on sessions(user_id);
-create index if not exists idx_sessions_expiry on sessions(expires_at);
-create index if not exists idx_audit_actor_created on audit_logs(actor_id, created_at desc);
+CREATE INDEX IF NOT EXISTS idx_profiles_city_province ON profiles(province, city);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role);
 
-create or replace function kelo_set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
+CREATE OR REPLACE FUNCTION kelo_touch_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
 $$;
 
-drop trigger if exists trg_users_updated_at on users;
-create trigger trg_users_updated_at
-before update on users
-for each row execute function kelo_set_updated_at();
+DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
+CREATE TRIGGER trg_users_updated_at
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION kelo_touch_updated_at();
+
+DROP TRIGGER IF EXISTS trg_profiles_updated_at ON profiles;
+CREATE TRIGGER trg_profiles_updated_at
+BEFORE UPDATE ON profiles
+FOR EACH ROW EXECUTE FUNCTION kelo_touch_updated_at();
