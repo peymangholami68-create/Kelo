@@ -109,10 +109,10 @@ const RECEIVE_FIELDS = [
 ];
 const PROVIDE_FIELDS = [
     ["activityArea","محدوده فعالیت این خدمت","activityArea","",true],
-    ["machineType","نوع ماشین آلات","text","مثلاً کمباین کلاس لکسیون ۶۳۰",false],
+    ["machineType","نوع ماشین آلات","text","مثلاً کمباین کلاس لکسیون ۶۳۰",true],
     ["capacity","ظرفیت / مشخصه","text","مثلاً ۴ تن در ساعت",false],
     ["price","قیمت","number","مثلاً 3000000",true],
-    ["priceUnit","واحد قیمت","select",["تومان / هکتار","تومان / ساعت","تومان / روز","تومان / سرویس"],true],
+    ["priceUnit","واحد قیمت","select",["تومان / هکتار","تومان / روز","تومان / سرویس"],true],
     ["dateStart","از تاریخ","jalaliDate","",true],
     ["dateEnd","تا تاریخ","jalaliDate","",false],
     ["note","توضیحات","textarea","توضیحات تکمیلی...",false],
@@ -208,6 +208,27 @@ function upsertAuthenticatedUserMirror(user){
     return local;
 }
 
+function applyServerSnapshot(snapshot){
+    if(!snapshot) return;
+    const data=snapshot.data||snapshot;
+    ['requests','listings','requestRecipients','bookings','deals','payments','machines'].forEach(function(k){
+        if(Array.isArray(data[k])) db[k]=cloneObject(data[k]);
+    });
+    // Marketplace data is authoritative on the server. Keep localStorage only
+    // as a harmless UI/draft cache; never treat it as the production database.
+    try {
+        const savedReviews = JSON.parse(localStorage.getItem('kelo_reviews') || '[]');
+        if (Array.isArray(savedReviews)) db.reviews = savedReviews;
+    } catch(e) { db.reviews = db.reviews || []; }
+    db._serverSyncedAt=Date.now();
+}
+async function refreshServerSnapshot(render){
+    if(!(window.KeloBackend && window.KeloBackend.isServerMode())) return;
+    const result=await window.KeloBackend.bootstrap();
+    applyServerSnapshot(result);
+    if(render) renderApp();
+}
+
 function enterAuthenticatedUser(user, options){
     options = options || {};
     currentUser = upsertAuthenticatedUserMirror(user);
@@ -222,6 +243,9 @@ function enterAuthenticatedUser(user, options){
         showCompleteProfile();
     } else if(options.render !== false){
         renderApp();
+    }
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        refreshServerSnapshot(true).catch(function(e){ console.warn('kelo snapshot:', e); });
     }
 }
 
@@ -298,7 +322,9 @@ async function login(e){
         try{
             const result = await window.KeloBackend.login(phone, nationalId, authMode);
             if(result && result.user){
-                enterAuthenticatedUser(result.user, { created: !!result.created });
+                enterAuthenticatedUser(result.user, { created: !!result.created, render:false });
+                await refreshServerSnapshot(true);
+                if(!currentUser.profileCompleted) showCompleteProfile();
                 return;
             }
             showAuthError('ورود انجام نشد.');
@@ -328,7 +354,7 @@ async function adminLoginValues(phone,nationalId){
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
             const result = await window.KeloBackend.login(phone, nationalId, 'admin');
-            if(result && result.user){ enterAuthenticatedUser(result.user); return; }
+            if(result && result.user){ enterAuthenticatedUser(result.user,{render:false}); await refreshServerSnapshot(true); if(!currentUser.profileCompleted) showCompleteProfile(); return; }
             showAuthError('اطلاعات ورود مدیر صحیح نیست.');
         }catch(err){ showAuthError('اطلاعات ورود مدیر صحیح نیست.'); }
         return;
@@ -580,14 +606,6 @@ function accountMenuIcon(type){
     logout:'<svg viewBox="0 0 24 24" '+common+'><path d="M10 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20H10"/><path d="M13 7l5 5-5 5M18 12H9"/></svg>'
   }; return icons[type]||icons.profile;
 }
-function serviceCardIcon(service){
-    const icons={
-      tractor:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10h3v4H7z" fill="#ffe0b2"/><path d="M3 20h18M5 16l4-8 4 8M15 16l4-8" fill="none" stroke="#e65100" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      planting:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22v-9M12 13C12 7 6 5 6 5s0 6 6 8M12 13c0-6 6-8 6-8s0 6-6 8" fill="none" stroke="#2e7d32" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      spray:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z" fill="none" stroke="#0277bd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      harvest:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 22h20M12 2v20M8 6c2 0 4 2 4 4M16 6c-2 0-4 2-4 4M8 12c2 0 4 2 4 4M16 12c-2 0-4 2-4 4" fill="none" stroke="#f57f17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-    }; return icons[service]||icons.tractor;
-}
 function mobileActivityFilterMatches(item,filter){ if(filter==='all') return true; return filter==='completed' ? (item.__kind==='request' && item.status==='accepted') : !(item.__kind==='request' && item.status==='accepted'); }
 let mobileActivityFilter='all';
 function setMobileActivityFilter(filter){ mobileActivityFilter=filter||'all'; renderMobileAccountSection('activities'); }
@@ -601,7 +619,8 @@ function mobileAccountProfileMarkup(){
     const name = (currentUser && currentUser.name && currentUser.name.trim()) ? currentUser.name.trim() : 'کاربر';
     const phone = currentUser && currentUser.phone ? toPersianDigits(currentUser.phone) : '—';
     const completedDeals = db.deals.filter(d => (d.userId===currentUser.id || d.providerId===currentUser.id) && d.status==='completed').length;
-    const ratingDisplay = '—';
+    const rating = getUserRating(currentUser.id);
+    const ratingDisplay = rating ? (toPersianDigits(rating.average.toFixed(1)) + ' (' + toPersianDigits(rating.count) + '+)') : '—';
 
     const headerHtml = '<div class="mobile-account-head inner edit-head">'
         + '<button type="button" class="mobile-account-back" onclick="closeMobileAccountSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button>'
@@ -651,7 +670,7 @@ function mobileAccountInvoiceMarkup(){
         const status=isRequester?'پرداخت‌شده':'دریافت‌شده';
         const total=Number(d.total)||0;
         return '<div class="mobile-activity-card">'
-            +'<div class="activity-row"><div class="mobile-activity-icon '+escapeHtml(d.service||'')+'">'+serviceCardIcon(d.service)+'</div>'
+            +'<div class="activity-row">'
             +'<div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(d.service))+'</strong><span class="activity-meta">'+escapeHtml([date,role,d.counterparty||''].filter(Boolean).join(' · '))+'</span></div>'
             +'<div class="mobile-activity-status completed">'+escapeHtml(status)+'</div></div>'
             +'<div class="offer-card-price">'+(total?formatMoney(total):'—')+'</div>'
@@ -739,7 +758,7 @@ function renderMobileAccountSection(section){
       const cards=items.length?items.map(item=>{
         const service=item.service;
         const meta=item.__kind==='request' ? requestCityName(item)+' · '+requestDate(item)+(requestAmount(item)?' · '+requestAmount(item):'') : formatActivityArea(item.data.activityArea)+(item.data.price?' · '+formatMoney(item.data.price):'');
-        return '<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-icon '+service+'">'+serviceCardIcon(service)+'</div><div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(service))+'</strong><span class="activity-meta">'+escapeHtml(meta)+'</span></div></div></div>';
+        return '<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(service))+'</strong><span class="activity-meta">'+escapeHtml(meta)+'</span></div></div></div>';
       }).join(''):keloEmptyStateHtml('چیزی اینجا نیست', 'فعالیت‌های شما اینجا نمایش داده می‌شود.');
       sheet.innerHTML=mobileAccountInnerHeader('فعالیت‌های من')+'<div class="mobile-account-body">'+filters+cards+'</div>';
       attachSheetDragOnce(sheet);
@@ -1007,7 +1026,7 @@ function renderMobilePriceUnitField(field){
     return '<button type="button" class="mobile-choice-trigger" onclick="openPriceUnitSheet()"><span class="'+(isPlaceholder?'placeholder':'')+'">'+escapeHtml(display)+'</span><span class="kelo-inline-chevron"><i class="kelo-chevron down"></i></span></button>';
 }
 function openPriceUnitSheet(){
-    const options = ['تومان / هکتار','تومان / ساعت','تومان / روز','تومان / سرویس'];
+    const options = ['تومان / هکتار','تومان / روز','تومان / سرویس'];
     const current = wizard.data.priceUnit || '';
     const listHtml = options.map(function(o){
         const isSel = o === current;
@@ -1138,7 +1157,7 @@ function submitMobileForm(){
     Object.keys(wizard.serviceOptions || {}).forEach(function(k){ wizard.data[k] = wizard.serviceOptions[k]; });
     finalizeMobileForm();
 }
-function finalizeMobileForm(){
+async function finalizeMobileForm(){
     if(!currentUser) return;
     const savedType = wizard.type, savedService = wizard.service;
     let newId = null;
@@ -1150,7 +1169,20 @@ function finalizeMobileForm(){
         if(type === 'file' && el) data[id] = Array.from(el.files || []).map(function(x){ return x.name; });
     });
     if(data.dateStart) data.date = data.dateStart;
-    if(wizard.type === 'receive'){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{
+            let result;
+            if(savedType==='receive' || savedType==='provide'){
+                result = wizard.editRequestId
+                    ? await window.KeloBackend.updateRequest(wizard.editRequestId,savedService,data)
+                    : await window.KeloBackend.createRequest(savedService,data,savedType==='provide'?'provide':'need');
+            }else{
+                result = await window.KeloBackend.createListing(savedService,data);
+            }
+            applyServerSnapshot(result);
+            newId=result.id || (savedType==='receive' ? (db.requests[0]&&db.requests[0].id) : (db.listings[0]&&db.listings[0].id));
+        }catch(err){ showToast((err&&err.body&&err.body.error)||'ذخیره اطلاعات روی سرور انجام نشد.','error'); return; }
+    } else if(wizard.type === 'receive' || wizard.type === 'provide'){
         if(wizard.editRequestId){
             const request=db.requests.find(r=>r.id===wizard.editRequestId && r.userId===currentUser.id);
             if(!request){ showToast('درخواست برای ویرایش پیدا نشد','error'); return; }
@@ -1162,7 +1194,7 @@ function finalizeMobileForm(){
             db.requestRecipients=db.requestRecipients.filter(x=>x.requestId!==request.id);
             newId=request.id;
         }else{
-            const request = { id: "r" + Date.now() + Math.random().toString(36).slice(2,6), userId: currentUser.id, requesterName: currentUser.name, service: savedService, data: data, status: "pending", created: new Date().toISOString() };
+            const request = { id: "r" + Date.now() + Math.random().toString(36).slice(2,6), userId: currentUser.id, requesterName: currentUser.name, requestKind: savedType==='provide'?'provide':'need', service: savedService, data: data, status: "pending", created: new Date().toISOString() };
             db.requests.push(request);
             newId = request.id;
         }
@@ -1219,11 +1251,40 @@ function mobileProposalRequests(){
 function requestRecipientCount(requestId, status){
     return db.requestRecipients.filter(x=>x.requestId===requestId && (!status || x.status===status)).length;
 }
+function isRequestExpired(r){
+    if(!r) return false;
+    return (r.effectiveStatus === 'expired');
+}
+function isRequestInactive(r){
+    if(!r) return false;
+    const s = r.effectiveStatus || r.status;
+    // همه‌ی نقش‌ها: این وضعیت‌ها غیرفعال
+    if(s === 'expired' || s === 'completed' || s === 'cancelled') return true;
+    // توافق شده:
+    if(s === 'agreed' || s === 'accepted' || s === 'in_progress'){
+        const isRequester = String(r.userId) === String(currentUser.id);
+        // کشاورز: یک‌بار مصرف → غیرفعال
+        if(isRequester) return true;
+        // ماشین‌دار: همچنان فعال تا date_end
+        return false;
+    }
+    return false;
+}
 function getMyReceivedOffers(){
     return db.requestRecipients
-        .filter(x=>x.providerId===currentUser.id && x.status==='pending')
+        .filter(x => x.providerId === currentUser.id && x.status === 'pending')
+        .filter(x => {
+            const req = db.requests.find(r => r.id === x.requestId);
+            if(!req) return false;
+            const s = req.effectiveStatus || req.status;
+            // درخواست منقضی/لغو/تمام → پیشنهاد بی‌معنی
+            if(s === 'expired' || s === 'cancelled' || s === 'completed') return false;
+            // درخواست توافق شده (با کسی دیگر) → این پیشنهاد بی‌معنی
+            if(s === 'agreed' || s === 'accepted' || s === 'in_progress') return false;
+            return true;
+        })
         .slice()
-        .sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+        .sort((a,b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
 }
 function getMyDeals(){
     return db.deals
@@ -1233,15 +1294,22 @@ function getMyDeals(){
 }
 function getRequestStatusLabel(r){
     if(!r) return '';
-    if(r.status==='completed') return 'تمام شده';
-    if(r.status==='accepted' || r.status==='agreed' || r.status==='in_progress') return 'توافق شده';
-    const hasPendingRecipients = db.requestRecipients.some(x=>x.requestId===r.id && x.status==='pending');
+    const s = r.effectiveStatus || r.status;
+    if(s === 'completed') return 'تمام شده';
+    if(s === 'cancelled') return 'لغو شده';
+    if(s === 'expired') return 'منقضی شده';
+    if(s === 'agreed' || s === 'accepted' || s === 'in_progress') return 'توافق شده';
+    const hasPendingRecipients = db.requestRecipients.some(x => x.requestId === r.id && x.status === 'pending');
     if(hasPendingRecipients) return 'در حال بررسی';
     return 'ایجاد شده';
 }
 function getRequestStatusClass(r){
     if(!r) return 'progress';
-    return (r.status==='completed' ? 'completed' : (r.status==='accepted' || r.status==='agreed' || r.status==='in_progress' ? 'completed' : 'progress'));
+    const s = r.effectiveStatus || r.status;
+    if(s === 'completed') return 'completed';
+    if(s === 'expired') return 'expired';
+    if(s === 'cancelled') return 'cancelled';
+    return 'progress';
 }
 function editRequest(requestId){
     const req=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
@@ -1249,33 +1317,39 @@ function editRequest(requestId){
         showToast('این درخواست دیگر قابل ویرایش نیست','error'); return;
     }
     wizard=makeEmptyWizard();
-    wizard.type='receive';
+    wizard.type=(req.requestKind==='provide')?'provide':'receive';
     wizard.formSheetOpen=true;
     wizard.service=req.service;
     wizard.serviceOptions=cloneObject(req.data || {});
     wizard.data=cloneObject(req.data || {});
     wizard.editRequestId=req.id;
     if(!wizard.data.dateStart) wizard.data.dateStart=wizard.data.date||localDateToIso(new Date());
-    document.documentElement.setAttribute('data-form-theme','blue');
+    document.documentElement.setAttribute('data-form-theme', wizard.type === 'provide' ? 'orange' : 'blue');
     renderMobileFormSheet();
 }
-function deleteRequest(requestId){
+async function deleteRequest(requestId){
     const req=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
     if(!req) return;
     if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
         showToast('درخواست توافق‌شده قابل حذف نیست','error'); return;
     }
     if(!confirm('این درخواست حذف شود؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{ applyServerSnapshot(await window.KeloBackend.deleteRequest(requestId)); showToast('درخواست حذف شد','success'); renderMobileProposals(); }catch(err){showToast((err&&err.body&&err.body.error)||'حذف درخواست انجام نشد.','error');} return;
+    }
     db.requestRecipients=db.requestRecipients.filter(x=>x.requestId!==requestId);
     db.requests=db.requests.filter(x=>x.id!==requestId);
     saveDB();
     showToast('درخواست حذف شد','success');
     renderMobileProposals();
 }
-function rejectOffer(recipientId){
+async function rejectOffer(recipientId){
     const recipient=db.requestRecipients.find(x=>x.id===recipientId && x.providerId===currentUser.id);
     if(!recipient) return;
     if(!confirm('این درخواست رد شود؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{applyServerSnapshot(await window.KeloBackend.rejectRecipient(recipientId));showToast('درخواست رد شد','success');renderMobileProposals();updateMobileHeader('کارهای من');}catch(err){showToast((err&&err.body&&err.body.error)||'رد درخواست انجام نشد.','error');} return;
+    }
     recipient.status='rejected';
     recipient.respondedAt=new Date().toISOString();
     saveDB();
@@ -1300,25 +1374,93 @@ function formatOfferUnitLine(offer, req){
     }
     return '';
 }
+
+function serviceCardIconSvg(service){
+    const common='viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+    const icons={
+        tractor:'<svg '+common+'><path d="M3 15v-5h7l2 5"/><path d="M12 15l3-8h3l3 3v5"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></svg>',
+        planting:'<svg '+common+'><path d="M12 21v-8"/><path d="M12 13c0-3.5 3-6 6-6 0 3-2 6-6 6z"/><path d="M12 13c0-3.5-3-6-6-6 0 3 2 6 6 6z"/></svg>',
+        spray:'<svg '+common+'><path d="M12 21a6 6 0 0 0 6-6c0-2-1-4-3-5.5-1.5-1-2.5-2.5-3-4-.5 1.5-1.5 3-3 4C7 11 6 13 6 15a6 6 0 0 0 6 6z"/></svg>',
+        harvest:'<svg '+common+'><path d="M12 21V8"/><path d="M12 12c-2 0-4-1-4-4 2 0 4 1 4 4z"/><path d="M12 12c2 0 4-1 4-4-2 0-4 1-4 4z"/><path d="M12 16c-2 0-4-1-4-4 2 0 4 1 4 4z"/><path d="M12 16c2 0 4-1 4-4-2 0-4 1-4 4z"/></svg>',
+        transport:'<svg '+common+'><rect x="2" y="7" width="12" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg>'
+    };
+    return icons[service]||icons.tractor;
+}
+function keloCardIcon(type){
+    const common='viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+    const icons={
+        machine:'<svg '+common+'><rect x="2" y="9" width="14" height="8" rx="1.5"/><circle cx="6" cy="19" r="2"/><circle cx="14" cy="19" r="2"/><path d="M16 11h3l3 3v3h-2"/></svg>',
+        area:'<svg '+common+'><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>',
+        location:'<svg '+common+'><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3"/></svg>',
+        date:'<svg '+common+'><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+        price:'<svg '+common+'><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 10h6M9 14h6"/></svg>',
+        phone:'<svg '+common+'><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 18h4"/></svg>',
+        role:'<svg '+common+'><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>'
+    };
+    return icons[type]||icons.location;
+}
+function keloCardInfo(type,label,value){
+    if(!value || value==='—') return '';
+    return '<div class="kelo-card-info">'
+        +'<span class="kelo-card-info-icon">'+keloCardIcon(type)+'</span>'
+        +'<span class="kelo-card-info-text"><small>'+escapeHtml(label)+'</small>'
+        +'<strong>'+escapeHtml(value)+'</strong></span>'
+        +'</div>';
+}
+function requestCardDate(r){
+    const start = r && r.data ? (r.data.dateStart || r.data.date) : null;
+    const end   = r && r.data ? r.data.dateEnd : null;
+    if(start && end){
+        const s = humanJalaliDate(start);
+        const e = humanJalaliDate(end);
+        return s === e ? s : s + ' تا ' + e;
+    }
+    return start ? humanJalaliDate(start) : '—';
+}
+
+function renderKeloRequestCard(req, options){
+    if(!req) return '';
+    options = options || {};
+    const service = req.service;
+    const isProvide = req.requestKind === 'provide';
+    const city = requestCityName(req);
+    const date = requestCardDate(req);
+    const machine = (req.data && req.data.machineType) ? req.data.machineType : '';
+    const area = (req.data && (req.data.area || req.data.amount)) ? (req.data.area || req.data.amount) : (req.area_ha || null);
+    const priceText = (req.data && req.data.price) ? (fmtNum(req.data.price) + (req.data.priceUnit ? ' ' + req.data.priceUnit : '')) : '';
+    let subTitle = '';
+    if(isProvide && machine){
+        subTitle = machine;
+    } else if(!isProvide && area){
+        subTitle = toPersianDigits(area) + ' هکتار';
+    }
+    const subTitleHtml = subTitle ? '<div class="kelo-card-subtitle">' + escapeHtml(subTitle) + '</div>' : '';
+    const locDateLine = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0;flex-wrap:wrap">'
+        + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(city) + '</span>'
+        + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
+        + '</div>';
+    let priceBar = '';
+    if(isProvide && priceText){
+        priceBar = '<div class="offer-card-price">' + escapeHtml(priceText) + '</div>';
+    }
+    return '<div class="mobile-activity-card kelo-service-card">'
+        + '<div class="kelo-card-head"><span class="kelo-card-head-icon">' + serviceCardIconSvg(service) + '</span><div style="flex:1;min-width:0"><strong style="display:block">' + escapeHtml(serviceName(service)) + '</strong>' + subTitleHtml + '</div></div>'
+        + '<div class="kelo-card-info-list">' + locDateLine + '</div>'
+        + priceBar
+        + (options.actions || '')
+        + '</div>';
+}
 function renderMobileOffersList(){
     const recipients = getMyReceivedOffers();
     if(!recipients.length) return keloEmptyStateHtml('چیزی اینجا نیست', 'پیشنهادهای ارسالی به درخواست شما، پس از ارسال اینجا نمایش داده می‌شود.');
     return recipients.map(o => {
         const req = db.requests.find(r => r.id === o.requestId);
         if(!req) return '';
-        const service = req.service;
-        const city = requestCityName(req);
-        const date = requestDate(req);
-        const area = requestAmount(req);
-        const meta = [city, date, area].filter(Boolean).join(' · ');
-        const unitLine = formatOfferUnitLine(o, req);
-        return '<div class="mobile-activity-card">'
-            +'<div class="activity-row"><div class="mobile-activity-icon '+service+'">'+serviceCardIcon(service)+'</div>'
-            +'<div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(service))+'</strong><span class="activity-meta">'+escapeHtml(meta)+'</span></div></div>'
-            +'<div class="offer-card-price">'+(o.total?formatMoney(o.total):'توافقی')+'</div>'
-            +(unitLine?'<span class="offer-card-price-unit">'+escapeHtml(unitLine)+'</span>':'')
-            +'<div class="offer-actions-row"><button type="button" class="btn btn-reject" onclick="rejectOffer(\''+o.id+'\')">رد کار</button><button type="button" class="btn btn-accept" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button></div>'
+        const actions = '<div class="offer-actions-row">'
+            +'<button type="button" class="btn btn-brand" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button>'
+            +'<button type="button" class="btn btn-reject" onclick="rejectOffer(\''+o.id+'\')">رد کار</button>'
             +'</div>';
+        return renderKeloRequestCard(req, { actions: actions });
     }).join('');
 }
 function isDealForUser(d){ return !!currentUser && (d.userId===currentUser.id || d.providerId===currentUser.id); }
@@ -1331,29 +1473,253 @@ function isDealPastEnd(deal){
     const now=new Date(); now.setHours(0,0,0,0);
     return end.getTime() <= now.getTime();
 }
+function dealCounterparty(deal){
+    if(!deal || !currentUser) return null;
+    const isRequester = String(deal.userId) === String(currentUser.id);
+    if(isRequester){
+        if(deal.providerName || deal.providerPhone){
+            return { name: deal.providerName || '—', phone: deal.providerPhone || '—' };
+        }
+        const u = db.users.find(function(x){ return String(x.id) === String(deal.providerId); });
+        return u || null;
+    }
+    if(deal.requesterName || deal.requesterPhone){
+        return { name: deal.requesterName || '—', phone: deal.requesterPhone || '—' };
+    }
+    const u = db.users.find(function(x){ return String(x.id) === String(deal.userId); });
+    return u || null;
+}
+function keloRatingBadge(avg, count){
+    return '<span class="kelo-rating-badge">'
+        + '<svg class="kelo-rating-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>'
+        + '<span class="kelo-rating-num">' + toPersianDigits(Number(avg).toFixed(1)) + '</span>'
+        + '</span>';
+}
+function renderDealCounterparty(deal, subLine){
+    const user = dealCounterparty(deal);
+    if(!user) return '';
+    const name = user.name || '—';
+    const phone = user.phone || '';
+    const cpId = String(deal.userId) === String(currentUser.id) ? deal.providerId : deal.userId;
+    const rating = getUserRating(cpId);
+    let ratingHtml = '';
+    if (rating && rating.count > 0) {
+        ratingHtml = ' ' + keloRatingBadge(rating.average, rating.count);
+    }
+    let actionsHtml = '';
+    if (phone) {
+        const cleanPhone = String(phone).replace(/[^\d]/g, '');
+        actionsHtml = '<span style="display:inline-flex;gap:8px;margin-right:auto">'
+            + '<a href="tel:' + cleanPhone + '" style="width:40px;height:40px;border-radius:50%;background:#e8f5ec;color:#2b9a5e;display:inline-flex;align-items:center;justify-content:center;text-decoration:none" onclick="event.stopPropagation();"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.36 11.36 0 0 0 .57 3.57 1 1 0 0 1-.24 1.02l-2.2 2.2z"/></svg></a>'
+            + '<button type="button" onclick="event.stopPropagation();showToast(\'چت به‌زودی\',\'info\');" style="width:40px;height:40px;border-radius:50%;background:#eef2fb;color:#5b7fd1;display:inline-flex;align-items:center;justify-content:center;border:0;cursor:pointer;padding:0"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg></button>'
+            + '</span>';
+    }
+    let subHtml = '';
+    if (subLine) {
+        subHtml = '<span style="font-size:11.5px;color:#8a928d;font-weight:600;line-height:1.5;margin-top:3px;text-align:right;display:block">' + escapeHtml(subLine) + '</span>';
+    }
+    return '<div style="display:flex;align-items:flex-start;gap:10px">'
+        + '<span style="width:30px;height:30px;flex:0 0 30px;border-radius:9px;background:#f3f6ef;color:#6f973d;display:inline-flex;align-items:center;justify-content:center;margin-top:2px">' + keloCardIcon('role') + '</span>'
+        + '<span style="display:flex;flex-direction:column;min-width:0;text-align:right;flex:1"><strong style="font-size:14px;color:#1F1F1F;font-weight:800;line-height:1.5">' + escapeHtml(name) + ratingHtml + '</strong>' + subHtml + '</span>'
+        + actionsHtml
+        + '</div>';
+}
+function openPaymentOptions(dealId){
+    const d=db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
+    if(!d) return;
+    if(d.paymentStatus==='paid'){ showToast('این توافق قبلاً پرداخت شده است','success'); return; }
+    const el=document.getElementById('keloPaymentOptions'); if(el) el.remove();
+    const total=Number(d.total)||0;
+    const backdrop=document.createElement('div');
+    backdrop.id='keloPaymentOptions';
+    backdrop.className='mobile-sheet-backdrop level3';
+    backdrop.innerHTML='<div class="mobile-sheet picker">'
+        +'<button type="button" class="mobile-sheet-handle"></button>'
+        +'<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closePaymentOptions()">'+KELO_BACK_CHEVRON_SVG+'</button><h2>روش پرداخت</h2><span></span></div>'
+        +'<div class="mobile-sheet-body">'
+        +'<p style="text-align:center;margin:0 0 18px;color:#5A635C;font-size:14px">مبلغ قابل پرداخت: <strong style="color:#1F1F1F">'+formatMoney(total)+'</strong></p>'
+        +'<button type="button" class="kelo-rate-row" onclick="payCash(\''+d.id+'\')"><span class="kelo-rate-label">پرداخت نقدی</span><span class="kelo-rate-check">›</span></button>'
+        +'<button type="button" class="kelo-rate-row" onclick="payOnline(\''+d.id+'\')"><span class="kelo-rate-label">پرداخت آنلاین</span><span class="kelo-rate-check">›</span></button>'
+        +'</div></div>';
+    document.body.appendChild(backdrop);
+}
+function closePaymentOptions(){
+    const el=document.getElementById('keloPaymentOptions'); if(el) el.remove();
+}
+function payCash(dealId){
+    closePaymentOptions();
+    const d=db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
+    if(!d) return;
+    if(!confirm('آیا مبلغ را به صورت نقدی پرداخت کردید؟')) return;
+    d.paymentStatus='paid';
+    d.paymentMethod='cash';
+    saveDB();
+    showToast('پرداخت نقدی ثبت شد','success');
+    renderMobileProposals();
+}
+function payOnline(dealId){
+    closePaymentOptions();
+    showToast('پرداخت آنلاین به‌زودی متصل می‌شود.','info');
+}
+function openDealReport(dealId){
+    const d=db.deals.find(x=>x.id===dealId);
+    if(!d) return;
+    const isFarmer=String(d.userId)===String(currentUser.id);
+    const isProvider=String(d.providerId)===String(currentUser.id);
+    if(!isFarmer && !isProvider) return;
+    const el=document.getElementById('keloDealReport'); if(el) el.remove();
+    const farmerQuestions=[
+        {id:'quality',   label:'کیفیت انجام کار'},
+        {id:'timing',    label:'وقت‌شناسی و حضور به‌موقع'},
+        {id:'skill',     label:'مهارت و تخصص'},
+        {id:'price',     label:'تطابق قیمت با توافق'},
+        {id:'behavior',  label:'برخورد و رفتار حرفه‌ای'}
+    ];
+    const providerQuestions=[
+        {id:'ready',     label:'آماده بودن زمین و محل کار'},
+        {id:'coord',     label:'خوش‌قولی و هماهنگی'},
+        {id:'payment',   label:'پرداخت به‌موقع'},
+        {id:'respect',   label:'برخورد محترمانه'},
+        {id:'accuracy',  label:'دقت در ارائه اطلاعات'}
+    ];
+    const questions = isFarmer ? farmerQuestions : providerQuestions;
+    const reportTitle = isFarmer ? 'ارزیابی ارائه‌دهنده' : 'ارزیابی درخواست‌دهنده';
+    const counterpartyName = (function(){
+        const u = dealCounterparty(d);
+        return u ? (u.name || '') : '';
+    })();
+    let bodyHtml='';
+    if(counterpartyName){
+        bodyHtml+='<p style="text-align:center;margin:0 0 18px;color:#5A635C;font-size:14px">نظر شما درباره <strong style="color:#1F1F1F">'+escapeHtml(counterpartyName)+'</strong></p>';
+    }
+    questions.forEach(function(q){
+        let starsHtml='';
+        for(let i=1;i<=5;i++){
+            starsHtml+='<button type="button" class="report-star" data-q="'+q.id+'" data-val="'+i+'" onclick="setReportStar(\''+q.id+'\','+i+')">★</button>';
+        }
+        bodyHtml+='<div class="report-question"><div class="report-question-label">'+q.label+'</div><div class="report-stars" data-q="'+q.id+'">'+starsHtml+'</div></div>';
+    });
+    bodyHtml+='<div class="report-question"><div class="report-question-label">نظر آزاد (اختیاری)</div><textarea id="reportNote" class="textarea" rows="3" style="width:100%;box-sizing:border-box;border:1.5px solid #E5E5E5;border-radius:12px;padding:12px;font-family:inherit;font-size:14px" placeholder="تجربه خود را بنویسید..."></textarea></div>';
+    const backdrop=document.createElement('div');
+    backdrop.id='keloDealReport';
+    backdrop.className='mobile-sheet-backdrop';
+    backdrop.innerHTML='<div class="mobile-sheet">'
+        +'<button type="button" class="mobile-sheet-handle"></button>'
+        +'<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closeDealReport()">'+KELO_BACK_CHEVRON_SVG+'</button><h2>'+escapeHtml(reportTitle)+'</h2><span></span></div>'
+        +'<div class="mobile-sheet-body">'+bodyHtml+'</div>'
+        +'<div class="mobile-sheet-footer"><button type="button" class="btn btn-brand" onclick="submitDealReport(\''+d.id+'\')">ثبت گزارش</button></div>'
+        +'</div>';
+    document.body.appendChild(backdrop);
+    window.__keloReportRatings={};
+}
+function closeDealReport(){
+    const el=document.getElementById('keloDealReport'); if(el) el.remove();
+    window.__keloReportRatings=null;
+}
+function setReportStar(qId,val){
+    if(!window.__keloReportRatings) window.__keloReportRatings={};
+    window.__keloReportRatings[qId]=val;
+    const container=document.querySelector('.report-stars[data-q="'+qId+'"]');
+    if(!container) return;
+    const stars=container.querySelectorAll('.report-star');
+    stars.forEach(function(s,i){ if(i<val) s.classList.add('active'); else s.classList.remove('active'); });
+}
+function submitDealReport(dealId){
+    const ratings=window.__keloReportRatings||{};
+    const noteEl=document.getElementById('reportNote');
+    const note=noteEl?noteEl.value:'';
+    const answeredCount = Object.keys(ratings).length;
+    if(answeredCount === 0 && !note.trim()){ showToast('لطفاً حداقل به یک مورد امتیاز بدهید یا نظر بنویسید','error'); return; }
+    const d=db.deals.find(x=>x.id===dealId); if(!d) return;
+    const isFarmer=String(d.userId)===String(currentUser.id);
+    const targetId=isFarmer?d.providerId:d.userId;
+    if(!db.reviews) db.reviews=[];
+    db.reviews.push({ id:'rv'+Date.now(), dealId:dealId, userId:currentUser.id, targetId:targetId, ratings:ratings, note:note, createdAt:new Date().toISOString() });
+    saveDB();
+    try { localStorage.setItem('kelo_reviews', JSON.stringify(db.reviews)); } catch(e){}
+    closeDealReport();
+    showToast('گزارش شما ثبت شد','success');
+    if(typeof renderMobileProposals === 'function') renderMobileProposals();
+}
+function getUserRating(userId){
+    const reviews = (db.reviews || []).filter(function(r){ return String(r.targetId) === String(userId); });
+    if (!reviews.length) return null;
+    let total = 0, count = 0;
+    reviews.forEach(function(r){
+        if (r.ratings) {
+            Object.keys(r.ratings).forEach(function(k){ total += Number(r.ratings[k]) || 0; count++; });
+        }
+    });
+    if (!count) return null;
+    return { average: total / count, count: reviews.length };
+}
+function hasUserReviewedDeal(dealId){
+    if (!currentUser) return false;
+    return (db.reviews || []).some(function(r){
+        return String(r.dealId) === String(dealId) && String(r.userId) === String(currentUser.id);
+    });
+}
+function computeDealChip(d){
+    if(!d) return { label: '', cls: 'progress' };
+    if(d.status === 'cancelled') return { label: 'لغو شده', cls: 'cancelled' };
+    const completed = (d.status === 'completed');
+    const paid = (d.paymentStatus === 'paid');
+    if(completed && paid) return { label: 'تمام شده', cls: 'completed' };
+    if(completed && !paid) return { label: 'در انتظار پرداخت', cls: 'pending' };
+    if(!completed && paid) return { label: 'پرداخت شده', cls: 'progress' };
+    return { label: 'توافق شده', cls: 'progress' };
+}
 function renderMobileDealsList(){
     const deals=getMyDeals();
     if(!deals.length) return keloEmptyStateHtml('توافقی ثبت نشده', 'بعد از پذیرش یک درخواست، توافق شما اینجا نمایش داده می‌شود.');
     return deals.map(d=>{
         const req=db.requests.find(r=>r.id===d.requestId);
         const service=req ? req.service : d.service;
-        const city=req ? requestCityName(req) : '—';
-        const date=req ? requestDate(req) : '—';
-        const isFarmer=d.userId===currentUser.id;
-        const role=isFarmer ? 'درخواست‌دهنده' : 'ارائه‌دهنده';
+        const fakeReq = req || { data: Object.assign({}, d.requestData || {}, { serviceLocation: d.requestLocation }), area_ha: d.requestArea };
+        const city = requestCityName(fakeReq);
+        const date = (req ? requestCardDate(req) : (d.dateStart ? (d.dateStart===d.dateEnd || !d.dateEnd ? humanJalaliDate(d.dateStart) : humanJalaliDate(d.dateStart)+' تا '+humanJalaliDate(d.dateEnd)) : '—'));
+        const isFarmer=String(d.userId)===String(currentUser.id);
+        const machine=(req && req.data && req.data.machineType) ? req.data.machineType : (d.providerMachineType || '');
+        const area=(req && req.data && (req.data.area || req.data.amount)) ? (req.data.area || req.data.amount) : (fakeReq.area_ha || null);
+        const price=(d.total != null && d.total !== undefined) ? formatMoney(d.total) : '—';
+        const subLine = isFarmer ? machine : (area ? (toPersianDigits(area) + ' هکتار') : '');
+        const _chip = computeDealChip(d);
+        const showReport = !hasUserReviewedDeal(d.id);
         let action='';
-        if(d.status==='completed'){
-            action='<div class="offer-card-price">✓ کار تمام شده</div>';
-        }else if(isFarmer){
-            action='<div class="offer-actions-row"><button type="button" class="btn btn-brand" onclick="payDeal(\''+d.id+'\')">'+(d.paymentStatus==='paid'?'پرداخت شد':'پرداخت')+'</button><button type="button" class="btn btn-reject" onclick="cancelDeal(\''+d.id+'\')">انصراف کار</button></div>';
-        }else{
-            if(isDealPastEnd(d)){
-                action='<div class="offer-actions-row"><button type="button" class="btn btn-brand" onclick="completeDeal(\''+d.id+'\')">اتمام کار</button><button type="button" class="btn btn-reject" onclick="cancelDeal(\''+d.id+'\')">انصراف کار</button></div>';
-            }else{
-                action='<div class="offer-actions-row"><button type="button" class="btn btn-brand" onclick="routeToDeal(\''+d.id+'\')">مسیریابی</button><button type="button" class="btn btn-reject" onclick="cancelDeal(\''+d.id+'\')">انصراف کار</button></div>';
+        if(isFarmer){
+            action = '<div class="offer-actions-row">'
+                + '<button type="button" class="btn btn-brand" onclick="openPaymentOptions(\'' + d.id + '\')">' + (d.paymentStatus==='paid'?'پرداخت شده':'پرداخت') + '</button>'
+                + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                + '</div>'
+                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+        } else {
+            if(d.status==='completed'){
+                action = '<div class="offer-card-price" style="text-align:center">✓ کار تمام شده</div>'
+                    + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+            } else {
+                action = '<div class="offer-actions-row">'
+                    + '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>'
+                    + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                    + '</div>'
+                    + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
             }
         }
-        return '<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-icon '+service+'">'+serviceCardIcon(service)+'</div><div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(service))+'</strong><span class="activity-meta">'+escapeHtml([city,date,role].filter(Boolean).join(' · '))+'</span></div><div class="mobile-activity-status '+(d.status==='completed'?'completed':'progress')+'">'+(d.status==='completed'?'تمام شده':'توافق شده')+'</div></div><div class="offer-card-price">'+(d.total?formatMoney(d.total):'—')+'</div>'+action+'</div>';
+                if(d.status==='cancelled') action = '';
+        const locDateLine = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:4px 0;flex-wrap:wrap">'
+            + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(city) + '</span>'
+            + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
+            + '</div>';
+        const priceLine = '<div class="offer-card-price">' + escapeHtml('قیمت کل: ' + price) + '</div>';
+        return '<div class="mobile-activity-card kelo-service-card">'
+            +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(serviceName(service))+'</strong>'
+            +  '<span class="kelo-card-status '+_chip.cls+'">'+_chip.label+'</span></div>'
+            +'<div class="kelo-card-info-list">'
+            +  renderDealCounterparty(d, subLine)
+            +  locDateLine
+            +'</div>'
+            +priceLine
+            +action
+            +'</div>';
     }).join('');
 }
 let mobileOrdersSubTab = 'requests';
@@ -1378,18 +1744,33 @@ function renderMobileProposals(){
             bodyHtml=requests.map(r=>{
                 const label=getRequestStatusLabel(r);
                 const cls=getRequestStatusClass(r);
-                const sentCount=requestRecipientCount(r.id);
-                const actions=(r.status==='pending' || r.status==='created')
-                    ? '<div class="offer-actions-row"><button type="button" class="btn btn-reject" onclick="event.stopPropagation();deleteRequest(\''+r.id+'\')">حذف درخواست</button><button type="button" class="btn btn-brand" onclick="event.stopPropagation();editRequest(\''+r.id+'\')">ویرایش درخواست</button></div>'
+                const actions=(!isRequestInactive(r) && (r.status==='pending' || r.status==='created'))
+                    ? '<div class="offer-actions-row"><button type="button" class="btn btn-brand" onclick="event.stopPropagation();editRequest(\''+r.id+'\')">ویرایش درخواست</button><button type="button" class="btn btn-reject" onclick="event.stopPropagation();deleteRequest(\''+r.id+'\')">حذف درخواست</button></div>'
                     : '';
-                const sentNote=sentCount ? '<span class="offer-card-price-unit">'+toPersianDigits(sentCount)+' ماشین‌دار در جریان</span>' : '';
-                return '<div class="mobile-activity-card" style="cursor:pointer" onclick="openRequestOffersMap(\''+r.id+'\')">'
-                    +'<div class="activity-row"><div class="mobile-activity-icon '+r.service+'">'+serviceCardIcon(r.service)+'</div>'
-                    +'<div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(r.service))+'</strong><span class="activity-meta">'+escapeHtml(requestCityName(r))+' · '+escapeHtml(requestDate(r))+(requestAmount(r)?' · '+escapeHtml(requestAmount(r)):'')+'</span></div>'
-                    +'<div class="mobile-activity-status '+cls+'">'+escapeHtml(label)+'</div></div>'+sentNote+actions+'</div>';
+                const isProvide=(r.requestKind==='provide');
+                const city=requestCityName(r);
+                const date=requestCardDate(r);
+                const machine=(r.data && r.data.machineType) ? r.data.machineType : '';
+                const area=(r.data && (r.data.area || r.data.amount)) ? (r.data.area || r.data.amount) : (r.area_ha || null);
+                const price=(r.data && r.data.price) ? (fmtNum(r.data.price)+(r.data.priceUnit?(' '+r.data.priceUnit):'')) : '';
+                const subTitle = isProvide ? machine : (area ? (toPersianDigits(area) + ' هکتار') : '');
+                const subTitleHtml = subTitle ? '<div class="kelo-card-subtitle">' + escapeHtml(subTitle) + '</div>' : '';
+                const locDateLine = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0;flex-wrap:wrap">'
+                    + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(city) + '</span>'
+                    + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
+                    + '</div>';
+                const priceBar = (isProvide && price) ? '<div class="offer-card-price">' + escapeHtml(price) + '</div>' : '';
+                const _inactive = isRequestInactive(r);
+                const _cardStyle = _inactive ? 'cursor:default;opacity:.65' : 'cursor:pointer';
+                const _onclickAttr = _inactive ? '' : ' onclick="openRequestOffersMap(\''+r.id+'\')"';
+                return '<div class="mobile-activity-card kelo-service-card" style="'+_cardStyle+'"'+_onclickAttr+'>'
+                    +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(r.service)+'</span><div style="flex:1;min-width:0"><strong style="display:block;font-size:14px;font-weight:800;color:#202020;line-height:1.4">'+escapeHtml(serviceName(r.service))+'</strong>'+subTitleHtml+'</div>'
+                    +  '<span class="kelo-card-status '+cls+'">'+escapeHtml(label)+'</span></div>'
+                    +'<div class="kelo-card-info-list">'+locDateLine+'</div>'
+                    +priceBar
+                    +actions+'</div>';
             }).join('');
-        }
-    }else if(mobileOrdersSubTab==='offers'){
+        }}else if(mobileOrdersSubTab==='offers'){
         bodyHtml=renderMobileOffersList();
     }else{
         bodyHtml=renderMobileDealsList();
@@ -1509,65 +1890,185 @@ function initRequestLocationMap(req){
     setTimeout(() => { if(token !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 120);
     setTimeout(() => { if(token !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 380);
 }
-function openRequestOffersMap(requestId){
+async function openRequestOffersMap(requestId){
     if(!currentUser) return;
     const req = db.requests.find(r => r.id === requestId && r.userId === currentUser.id);
-    if(!req){ showToast('درخواست پیدا نشد', 'error'); return; }
-    disposeOffersMap();
-    const mapToken = window._keloOffersMapToken || 0;
-    const app = document.getElementById('app');
-    if(app){ app.classList.remove('mobile-tab-home','mobile-tab-request','mobile-tab-proposals','mobile-tab-request-offers'); app.classList.add('mobile-tab-request-offers');
-        const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.add('hidden'); }
-    window.__keloMobilePreviousTab = window.__keloMobileTab || 'request';
-    window.__keloMobileTab = 'request-offers';
-    const sb=document.getElementById('sidebar'); if(sb) sb.innerHTML='';
-    const c=document.getElementById('appContent'); if(!c) return;
-    c.className='content';
-
-    const candidates = getEligibleProvidersForRequest(req);
+    if(!req){ showToast('\u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f', 'error'); return; }
+    const _isProvideReq = (req.requestKind === 'provide');
+    const _existingSheet = document.getElementById('keloRequestOffersSheet');
+    const _existingContent = document.getElementById('keloRequestOffersContent');
+    const _isSameRequest = !!(_existingSheet && _existingContent && _existingSheet.dataset.requestId === String(requestId));
+    if(!_isSameRequest){ closeRequestOffersSheet(); }
+    let candidates = getEligibleProvidersForRequest(req);
+    if(window.KeloBackend && window.KeloBackend.isServerMode()) {
+        try {
+            const remote = await window.KeloBackend.getProviders(req.id);
+            candidates = Array.isArray(remote.providers) ? remote.providers : [];
+        } catch(err) {
+            showToast((err&&err.body&&err.body.error)||'\u062f\u0631\u06cc\u0627\u0641\u062a \u067e\u06cc\u0634\u0646\u0647\u0627\u062f\u0647\u0627\u06cc \u0642\u0627\u0628\u0644 \u0627\u0631\u0633\u0627\u0644 \u0627\u0646\u062c\u0627\u0645 \u0646\u0634\u062f.','error');
+            return;
+        }
+    }
     const currentRecipients = db.requestRecipients.filter(x=>x.requestId===req.id);
     const recipientByProvider = {};
-    currentRecipients.forEach(x=>{ recipientByProvider[x.providerId]=x; });
-
+    const _myId = String(currentUser.id);
+    currentRecipients.forEach(function(x){
+        const _p = String(x.proposerId || x.proposer_id || '');
+        const _r = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
+        const _o = _p === _myId ? _r : _p;
+        if(!_o || _o === _myId) return;
+        const existing = recipientByProvider[_o];
+        const xActive  = (x.status === 'pending' || x.status === 'accepted');
+        const exActive = existing && (existing.status === 'pending' || existing.status === 'accepted');
+        if(xActive && !exActive){
+            recipientByProvider[_o] = x;
+        } else if(!existing){
+            recipientByProvider[_o] = x;
+        }
+    });
     const providersHtml = candidates.length ? candidates.map(o=>{
         const rec=recipientByProvider[o.providerId];
         let action='';
         if(rec && rec.status==='pending'){
-            action='<button class="btn offer-item-btn offer-item-btn-sent" disabled>ارسال شد</button>';
+            action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
         }else if(rec && rec.status==='rejected'){
-            action='<button class="btn offer-item-btn offer-item-btn-rejected" disabled>رد شده</button>';
+            action='<button class="btn offer-item-btn offer-item-btn-rejected" disabled>\u0631\u062f \u0634\u062f\u0647</button>';
         }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
-            action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>توافق شده</button>';
+            action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
         }else{
-            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">ارسال کار</button>';
+            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
         }
         const service = o.service || req.service;
-        const meta = [o.location || '—', (o.rating ? '⭐ ' + toPersianDigits(o.rating) : '')].filter(Boolean).join(' · ');
-        const priceLine = o.unitPrice ? formatMoney(o.unitPrice) + (o.priceUnit ? ' · '+escapeHtml(o.priceUnit) : '') : 'توافقی';
+        let _subOpt = '';
+        if (o.data) {
+            if (Array.isArray(o.data.landType) && o.data.landType.length) _subOpt = o.data.landType[0];
+            else if (Array.isArray(o.data.crop) && o.data.crop.length) _subOpt = o.data.crop[0];
+            else if (typeof o.data.landType === 'string' && o.data.landType) _subOpt = o.data.landType;
+            else if (typeof o.data.crop === 'string' && o.data.crop) _subOpt = o.data.crop;
+        }
+        const _serviceDisplay = serviceName(service) + (_subOpt ? ' ' + _subOpt : '');
+        const _rating = getUserRating(o.providerId);
+        const _ratingHtml = (_rating && _rating.count > 0) ? ' <span class="kelo-rating-badge"><svg class="kelo-rating-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg><span class="kelo-rating-num">' + toPersianDigits(_rating.average.toFixed(1)) + '</span></span>' : '';
+        let _infoHtml = '';
+        if(_isProvideReq){
+            const _area = (o.data && (o.data.area || o.data.amount)) ? (o.data.area || o.data.amount) : null;
+            let _locDisplay = o.location || '';
+            if (!_locDisplay && o.data && o.data.serviceLocation && typeof o.data.serviceLocation.lat === 'number') {
+                _locDisplay = nearestCityFromCoords(o.data.serviceLocation.lat, o.data.serviceLocation.lng) || '';
+            }
+            _infoHtml = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0;flex-wrap:wrap">'
+                + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('area') + '</span>' + (_area ? (toPersianDigits(_area) + ' \u0647\u06a9\u062a\u0627\u0631') : '\u2014') + '</span>'
+                + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(_locDisplay || '\u2014') + '</span>'
+                + '</div>';
+        }else{
+            const _mt = (o.data && o.data.machineType) ? o.data.machineType : '';
+            _infoHtml = '<div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0">'
+                + '<span class="kelo-icon-inline">' + keloCardIcon('machine') + '</span>' + escapeHtml(_mt || '\u2014')
+                + '</div>';
+        }
+                if(rec && rec.status==='pending'){
+            const _rp = String(rec.proposerId || rec.proposer_id || '');
+            if(_rp !== _myId){
+                action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();rejectIncomingProposal(\''+rec.id+'\',\''+req.id+'\')">رد درخواست</button>';
+            }
+        }
+        const priceLine = o.unitPrice ? fmtNum(o.unitPrice) + (o.priceUnit ? ' '+o.priceUnit : '') : '\u062a\u0648\u0627\u0641\u0642\u06cc';
+        const _showPrice = !_isProvideReq;
         return '<div class="request-offers-list-item" data-offer-id="'+escapeHtml(o.providerId)+'" onclick="focusOfferOnMap(\''+escapeHtml(o.providerId)+'\')">'
-            +'<div class="activity-row">'
-            +   '<div class="mobile-activity-icon '+service+'">'+serviceCardIcon(service)+'</div>'
-            +   '<div class="mobile-activity-main"><strong>'+escapeHtml(o.provider || 'ارائه‌دهنده')+'</strong><span class="activity-meta">'+escapeHtml(meta)+'</span></div>'
-            +'</div>'
-            +'<div class="offer-card-price">'+priceLine+'</div>'
+            +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(_serviceDisplay)+_ratingHtml+'</strong></div>'
+            +'<div class="kelo-card-info-list">'+_infoHtml+'</div>'
+            +(_showPrice ? '<div class="offer-card-price">'+priceLine+'</div>' : '')
             +'<div class="offer-actions-row single">'+action+'</div>'
             +'</div>';
-    }).join('') : '<div class="mobile-empty-state">ارائه‌دهنده واجد شرایطی برای این درخواست پیدا نشد.</div>';
-
-    c.innerHTML='<div class="request-offers-view"><div id="keloOffersMap" class="request-offers-map"></div><button type="button" class="request-offers-back-btn" onclick="goBackFromOffersMap()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><div class="request-offers-sheet" id="requestOffersSheet"><button type="button" class="request-offers-handle"></button><div class="request-offers-sheet-head"><h3>'+escapeHtml(serviceName(req.service))+'</h3><small>'+escapeHtml(requestCityName(req))+' · '+toPersianDigits(candidates.length)+' ارائه‌دهنده واجد شرایط</small></div><div class="request-offers-sheet-body" id="requestOffersSheetBody">'+providersHtml+'</div></div></div>';
-    updateMobileHeader('ارائه‌دهندگان خدمت');
-    requestAnimationFrame(() => { if(mapToken !== (window._keloOffersMapToken || 0)) return; initOffersMap(req, candidates); });
+    }).join('') : '<div class="mobile-empty-state">'+(_isProvideReq?'\u06a9\u0634\u0627\u0648\u0631\u0632 \u0648\u0627\u062c\u062f \u0634\u0631\u0627\u06cc\u0637\u06cc \u0628\u0631\u0627\u06cc \u0627\u06cc\u0646 \u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f.':'\u0627\u0631\u0627\u0626\u0647\u200c\u062f\u0647\u0646\u062f\u0647 \u0648\u0627\u062c\u062f \u0634\u0631\u0627\u06cc\u0637\u06cc \u0628\u0631\u0627\u06cc \u0627\u06cc\u0646 \u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f.')+'</div>';
+    let _statPending = 0, _statRejected = 0;
+    currentRecipients.forEach(function(x){ if(x.status==='pending') _statPending++; else if(x.status==='rejected') _statRejected++; });
+    const _firstLabel = _isProvideReq ? '\u06a9\u0634\u0627\u0648\u0631\u0632' : '\u0627\u0631\u0627\u0626\u0647\u200c\u062f\u0647\u0646\u062f\u0647';
+    const _statsHtml = '<div class="kelo-stats-row">'
+        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(candidates.length) + '</div><div class="kelo-stat-lbl">' + _firstLabel + '</div></div>'
+        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(_statPending) + '</div><div class="kelo-stat-lbl">\u062f\u0631 \u0627\u0646\u062a\u0638\u0627\u0631</div></div>'
+        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(_statRejected) + '</div><div class="kelo-stat-lbl">\u0631\u062f \u0634\u062f\u0647</div></div>'
+        + '</div>';
+    if(_isSameRequest){
+        _existingContent.innerHTML = _statsHtml + providersHtml;
+        requestAnimationFrame(function(){ try{ initOffersMap(req, candidates); }catch(e){ console.warn('initOffersMap refresh failed', e); } });
+        return;
+    }
+    const backdrop = document.createElement('div');
+    backdrop.id = 'keloRequestOffersSheet';
+    backdrop.className = 'mobile-sheet-backdrop';
+    backdrop.dataset.requestId = String(requestId);
+    backdrop.innerHTML = '<div class="mobile-sheet" style="position:relative">'
+        + '<button type="button" class="mobile-sheet-handle"></button>'
+        + '<div class="mobile-sheet-header">'
+        + '<button type="button" class="mobile-sheet-back-btn" onclick="closeRequestOffersSheet()" aria-label="\u0628\u0633\u062a\u0646">'+KELO_BACK_CHEVRON_SVG+'</button>'
+        + '<h2>\u062f\u0631\u062e\u0648\u0627\u0633\u062a \u0647\u0627</h2>'
+        + '<span></span>'
+        + '</div>'
+        + '<div class="mobile-sheet-body" style="position:relative">'
+        + '<div id="keloRequestOffersContent">'
+        + _statsHtml
+        + providersHtml
+        + '</div>'
+        + '<div id="keloOffersMap" style="position:absolute;top:0;left:0;right:0;bottom:0;opacity:0;pointer-events:none;z-index:5;background:#dfe7cc;transition:opacity .2s ease"></div>'
+        + '</div>'
+        + '</div>'
+        + '<button type="button" class="kelo-map-toggle-btn" id="keloMapToggleBtn" onclick="toggleOffersMap()">'
+        + '<span id="keloMapToggleIcon">\uD83D\uDDFA</span>'
+        + '<span id="keloMapToggleText">\u0646\u0645\u0627\u06cc\u0634 \u0646\u0642\u0634\u0647</span>'
+        + '</button>';
+    document.body.appendChild(backdrop);
+    document.body.style.overflow = 'hidden';
+    const mapToken = window._keloOffersMapToken || 0;
+    requestAnimationFrame(() => {
+        if(mapToken !== (window._keloOffersMapToken || 0)) return;
+        initOffersMap(req, candidates);
+    });
 }
-let sheetTouchDrag = null;
-function startSheetTouch(e){
-    if(document.documentElement.getAttribute('data-viewport') !== 'mobile') return;
-    const sheet = e.target.closest('.request-offers-sheet'); if(!sheet) return; const btn = e.target.closest('button, a, input, textarea, select'); if(btn && !btn.classList.contains('request-offers-handle')) return; if(sheetTouchDrag) return; const touch = e.touches && e.touches[0]; if(!touch) return; const body = sheet.querySelector('.request-offers-sheet-body'); const inBody = body && body.contains(e.target); sheetTouchDrag = { sheet, body, inBody, startY: touch.clientY, startHeight: sheet.getBoundingClientRect().height, parentHeight: sheet.parentElement.getBoundingClientRect().height, startScrollTop: body ? body.scrollTop : 0, dragging: false, decided: false }; }
-function moveSheetTouch(e){ const d = sheetTouchDrag; if(!d) return; const touch = e.touches && e.touches[0]; if(!touch) return; const dy = touch.clientY - d.startY; if(!d.decided){ if(Math.abs(dy) < 6) return; d.decided = true; if(d.inBody && d.startScrollTop > 0){ sheetTouchDrag = null; return; } d.dragging = true; d.sheet.classList.add('dragging'); } if(d.dragging){ if(e.cancelable) e.preventDefault(); const newH = Math.max(96, Math.min(d.parentHeight * 0.78, d.startHeight - dy)); d.sheet.style.height = newH + 'px'; } }
-function endSheetTouch(){ const d = sheetTouchDrag; sheetTouchDrag = null; if(!d || !d.dragging) return; d.sheet.classList.remove('dragging'); const currentH = d.sheet.getBoundingClientRect().height; const ratio = currentH / d.parentHeight; d.sheet.style.height = ''; if(currentH < 160){ d.sheet.classList.add('collapsed'); d.sheet.classList.remove('expanded'); } else if(ratio > 0.50){ d.sheet.classList.add('expanded'); d.sheet.classList.remove('collapsed'); } else { d.sheet.classList.remove('expanded','collapsed'); } setTimeout(function(){ if(window._keloOffersMap){ try{ window._keloOffersMap.invalidateSize(); }catch(e){} } }, 360); }
-document.addEventListener('touchstart', startSheetTouch, {passive: true});
-document.addEventListener('touchmove', moveSheetTouch, {passive: false});
-document.addEventListener('touchend', endSheetTouch);
-document.addEventListener('touchcancel', endSheetTouch);
+function closeRequestOffersSheet(){
+    const el = document.getElementById('keloRequestOffersSheet');
+    if(el) el.remove();
+    document.body.style.overflow = '';
+    disposeOffersMap();
+    window._keloOffersMarkers = {};
+}
+function toggleOffersMap(){
+    const map = document.getElementById('keloOffersMap');
+    const icon = document.getElementById('keloMapToggleIcon');
+    const text = document.getElementById('keloMapToggleText');
+    if(!map || !icon || !text) return;
+    const isHidden = (map.style.opacity === '0' || map.style.opacity === '' || map.style.opacity === '0.0');
+    if(isHidden){
+        map.style.opacity = '1';
+        map.style.pointerEvents = 'auto';
+        icon.textContent = '\u2715';
+        text.textContent = '\u0628\u0633\u062a\u0646 \u0646\u0642\u0634\u0647';
+        setTimeout(function(){
+            if(window._keloOffersMap){
+                try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
+                try{
+                    if(window._keloOffersMap._keloLastBounds){
+                        window._keloOffersMap.fitBounds(window._keloOffersMap._keloLastBounds, {padding:[40,40], animate:false});
+                    }
+                }catch(e){}
+            }
+        }, 100);
+        setTimeout(function(){
+            if(window._keloOffersMap){
+                try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
+            }
+        }, 400);
+    } else {
+        map.style.opacity = '0';
+        map.style.pointerEvents = 'none';
+        icon.textContent = '\uD83D\uDDFA';
+        text.textContent = '\u0646\u0645\u0627\u06cc\u0634 \u0646\u0642\u0634\u0647';
+    }
+}
+function goBackFromOffersMap(){
+    closeRequestOffersSheet();
+}
+
 function initOffersMap(req, offers){
     const token = window._keloOffersMapToken || 0;
     const el = document.getElementById('keloOffersMap');
@@ -1595,7 +2096,7 @@ function initOffersMap(req, offers){
         points.push(pos);
     });
     if(mapToken !== (window._keloOffersMapToken || 0)){ try{ map.remove(); }catch(e){} return; }
-    if(points.length > 1){ try { map.fitBounds(L.latLngBounds(points).pad(0.25)); } catch(e){} }
+    if(points.length > 1){ try { const b=L.latLngBounds(points).pad(0.25); map._keloLastBounds=b; map.fitBounds(b); } catch(e){} } else if(points.length === 1){ try { map._keloLastBounds=L.latLngBounds(points); } catch(e){} }
     window._keloOffersMap = map;
     requestAnimationFrame(() => { try{ map.invalidateSize(true); }catch(e){} });
     setTimeout(() => { if(mapToken !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 120);
@@ -1746,7 +2247,7 @@ function renderMapLocationField(id,label,req,help,mobile){
     const loc=wizard.data[id]; const has=loc && typeof loc.lat==='number' && typeof loc.lng==='number';
     if(mobile){
         const inner = has
-            ? '<div class="mobile-inline-map-preview" id="inlineMap_'+escapeHtml(id)+'"></div>'
+            ? '<div class="mobile-inline-map-preview" id="inlineMap_'+escapeHtml(id)+'"><div class="kelo-map-city-chip" id="inlineMapCityChip"></div></div>'
             : '<div class="mobile-inline-map-inner"><svg viewBox="0 0 24 24"><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3" fill="#fff"/></svg><span class="mobile-inline-map-text">انتخاب موقعیت روی نقشه</span></div>';
         return '<div class="sidebar-field map-location-field-mobile"><label>'+escapeHtml(label)+(req?' <span style="color:red">*</span>':'')+'</label><button type="button" class="mobile-inline-map" onclick="activateMapPicker()" aria-label="باز کردن نقشه">'+inner+'</button><div class="mobile-inline-map-value">'+(has?'✓ موقعیت زمین انتخاب شد':'روی نقشه ضربه بزنید و موقعیت زمین را مشخص کنید')+'</div></div>';
     }
@@ -1760,7 +2261,7 @@ function initializeInlineLocationMap(){
     const center=loc&&typeof loc.lat==='number' ? [loc.lat,loc.lng] : [36.5659,53.0586];
     const zoom=loc&&typeof loc.lat==='number' ? 14 : 9;
     const map=createKeloMap(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,touchZoom:false},center,zoom);
-    if(loc&&typeof loc.lat==='number') L.marker([loc.lat,loc.lng]).addTo(map);
+    if(loc&&typeof loc.lat==='number'){ L.marker([loc.lat,loc.lng]).addTo(map); var _cc=nearestCityFromCoords(loc.lat,loc.lng); var _pv=provinceFromCity(_cc); var _ch=document.getElementById('inlineMapCityChip'); if(_ch&&_cc){ _ch.textContent=_cc+(_pv?', '+_pv:''); _ch.style.display='inline-flex'; } }
     window._keloInlineMap=map;
     setTimeout(()=>map.invalidateSize(),50);
 }
@@ -1775,7 +2276,7 @@ function openMobileMapPickerOverlay(){
     const gpsSvg = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>';
     const isBrandMode = !!wizard._profileMapMode;
     const confirmBtnClass = isBrandMode ? 'btn is-brand' : 'btn';
-    overlay.innerHTML = '<div class="mobile-location-picker-sheet"><div class="mobile-location-picker-head"><button type="button" id="keloMapPickerClose" aria-label="بازگشت" style="justify-self:end">'+KELO_BACK_CHEVRON_SVG+'</button><strong>انتخاب موقعیت زمین</strong><span></span></div><div class="mobile-location-picker-map-wrap"><div id="mobileLocationPickerMap"></div><div class="kelo-map-city-chip" id="keloMapCityChip"></div><div class="kelo-map-search-wrap"><div class="kelo-map-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="keloMapSearchInput" placeholder="جستجوی شهر یا آدرس..."></div></div><div class="kelo-map-center-pin">'+pinSvg+'</div><button type="button" class="kelo-map-gps-btn" id="keloMapGpsBtn" aria-label="موقعیت من">'+gpsSvg+'</button></div><div class="mobile-location-picker-footer"><button type="button" class="'+confirmBtnClass+'" id="keloMapPickerConfirmBtn">'+pinSvg+'<span>تأیید موقعیت</span></button></div></div>';
+    overlay.innerHTML = '<div class="mobile-location-picker-sheet"><div class="mobile-location-picker-head"><button type="button" id="keloMapPickerClose" aria-label="بازگشت" style="justify-self:end">'+KELO_BACK_CHEVRON_SVG+'</button><strong>انتخاب موقعیت زمین</strong><span></span></div><div class="mobile-location-picker-map-wrap"><div id="mobileLocationPickerMap"></div><div class="kelo-map-search-wrap"><div class="kelo-map-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="keloMapSearchInput" placeholder="جستجوی شهر یا آدرس..."></div></div><div class="kelo-map-center-pin">'+pinSvg+'</div><button type="button" class="kelo-map-gps-btn" id="keloMapGpsBtn" aria-label="موقعیت من">'+gpsSvg+'</button></div><div class="mobile-location-picker-footer"><button type="button" class="'+confirmBtnClass+'" id="keloMapPickerConfirmBtn">'+pinSvg+'<span>تأیید موقعیت</span></button></div></div>';
     document.body.appendChild(overlay);
     document.getElementById('keloMapPickerClose').addEventListener('click', closeMobileLocationPicker);
     document.getElementById('keloMapPickerConfirmBtn').addEventListener('click', confirmMobileLocationPicker);
@@ -2103,7 +2604,7 @@ const jalaliDateCache=new Map();
 function getJalaliParts(date){ const parts=jalaliPartsFormatter.formatToParts(date).reduce((o,p)=>{ if(['year','month','day'].includes(p.type))o[p.type]=Number(p.value); return o; },{}); return {year:parts.year,month:parts.month,day:parts.day}; }
 function localDateToIso(date){ const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0'); return y+'-'+m+'-'+d; }
 function isoToLocalDate(iso){ if(!(typeof iso==='string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)))return null; const p=iso.split('-').map(Number); return new Date(p[0],p[1]-1,p[2],12); }
-function parseStoredDate(value){ if(typeof value!=='string')return null; const n=normalizeDigits(value).trim(); if(/^\d{4}-\d{2}-\d{2}$/.test(n))return isoToLocalDate(n); const m=n.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/); if(m){ const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]); if(y>=1300 && y<1600) return jalaliToDate(y,mo,d); } return null; }
+function parseStoredDate(value){ if(typeof value!=='string')return null; const n=normalizeDigits(value).trim(); if(/^\d{4}-\d{2}-\d{2}T/.test(n))return new Date(n); if(/^\d{4}-\d{2}-\d{2}$/.test(n))return isoToLocalDate(n); const m=n.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/); if(m){ const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]); if(y>=1300 && y<1600) return jalaliToDate(y,mo,d); } return null; }
 function jalaliToDate(jy,jm,jd){ const key=jy+'/'+jm+'/'+jd; if(jalaliDateCache.has(key))return new Date(jalaliDateCache.get(key)); const approx=new Date(jy+621,0,1,12); for(let offset=-370;offset<=370;offset++){ const candidate=new Date(approx); candidate.setDate(approx.getDate()+offset); const p=getJalaliParts(candidate); if(p.year===jy && p.month===jm && p.day===jd){ jalaliDateCache.set(key,candidate.getTime()); return candidate; } } return null; }
 function getJalaliMonthLength(year,month){ if(month<=6)return 31; if(month<=11)return 30; const start=jalaliToDate(year,12,1), next=jalaliToDate(year+1,1,1); return Math.round((next-start)/86400000); }
 function shiftJalaliMonth(year,month,delta){ let m=month+delta,y=year; while(m<1){m+=12;y--;} while(m>12){m-=12;y++;} return {year:y,month:m}; }
@@ -2305,8 +2806,8 @@ function renderActivityProvinceOptions(query){
 }
 function chooseActivityProvince(province){ wizard.activityProvince=province; wizard.activitySearch=''; wizard.activityOpen=true; refreshActivityAreaUI(); }
 function backToActivityProvinces(event){ if(event){ event.preventDefault(); event.stopPropagation(); } wizard.activityProvince=''; wizard.activitySearch=''; wizard.activityOpen=true; refreshActivityAreaUI(); }
-function filterActivityCities(value){ wizard.activitySearch=value||''; wizard.activityOpen=true; refreshActivityAreaUI(); setTimeout(()=>{const el=document.querySelector('.activity-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); }},0); }
-function filterActivityProvinces(value){ wizard.activitySearch=value||''; wizard.activityOpen=true; refreshActivityAreaUI(); setTimeout(()=>{const el=document.querySelector('.activity-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); }},0); }
+function filterActivityCities(value){ wizard.activitySearch=value||''; wizard.activityOpen=true; refreshActivityAreaUI(); setTimeout(()=>{const el=document.querySelector('#keloActivityAreaSheet .mobile-sheet-search input'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); }},0); }
+function filterActivityProvinces(value){ wizard.activitySearch=value||''; wizard.activityOpen=true; refreshActivityAreaUI(); setTimeout(()=>{const el=document.querySelector('#keloActivityAreaSheet .mobile-sheet-search input'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); }},0); }
 function toggleAllCities(province, checked){
     const current=getActivityAreaRows();
     const index=current.findIndex(x=>x.province===province);
@@ -2343,12 +2844,17 @@ function renderWizard(){
 function syncWizardFieldValue(element){ if(!element || !element.dataset || !element.dataset.wizardField || !wizard || !wizard.data)return; if(element.type==='file')return; wizard.data[element.dataset.wizardField]=element.value; saveWizardDraftDebounced(); }
 document.addEventListener('input', function(e){ syncWizardFieldValue(e.target); });
 document.addEventListener('change', function(e){ syncWizardFieldValue(e.target); });
-function finalizeWizard(){
+async function finalizeWizard(){
     if(!currentUser)return;
     let savedType = wizard.type, savedService = wizard.service, newId = null;
     const data = cloneObject(wizard.data);
     if(data.dateStart) data.date = data.dateStart;
-    if(wizard.type==='receive'){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{
+            const result = wizard.type==='receive' ? await window.KeloBackend.createRequest(savedService,data) : await window.KeloBackend.createListing(savedService,data);
+            applyServerSnapshot(result); newId=result.id;
+        }catch(err){ showToast((err&&err.body&&err.body.error)||'ذخیره اطلاعات روی سرور انجام نشد.','error'); return; }
+    } else if(wizard.type==='receive'){
         const request={ id:"r"+Date.now()+Math.random().toString(36).slice(2,6), userId:currentUser.id, requesterName:currentUser.name, service:savedService, data:data, status:"pending", created:new Date().toISOString() };
         db.requests.push(request); saveDB(); newId = request.id;
         mapContext={type:'receive',service:savedService,target:wizard.data.serviceLocation||null,requestId:request.id};
@@ -2396,6 +2902,23 @@ function getProviderIdentityFromListing(listing){
         data:listing.data || {}
     };
 }
+function hasActiveProposalBetweenUsers(userA, userB){
+    if(!userA || !userB) return false;
+    const a = String(userA);
+    const b = String(userB);
+    if(a === b) return false;
+    return db.requestRecipients.some(function(rec){
+        if(rec.status !== 'pending') return false;
+        const relatedRequest = db.requests.find(function(r){ return r.id === rec.requestId; });
+        if(!relatedRequest) return false;
+        const proposerId  = rec.proposerId  || relatedRequest.userId;
+        const recipientId = rec.recipientId || rec.providerId;
+        if(!proposerId || !recipientId) return false;
+        const p = String(proposerId);
+        const r = String(recipientId);
+        return (p === a && r === b) || (p === b && r === a);
+    });
+}
 function getEligibleProvidersForRequest(request){
     if(!request) return [];
     const {start,end}=getRequestDateRange(request);
@@ -2421,6 +2944,7 @@ function getEligibleProvidersForRequest(request){
           const ownerUser=db.users.find(u=>u.name===m.owner);
           const providerId=ownerUser?.id || ('machine-owner:'+m.owner);
           if(providerId===request.userId) return;
+          /* disabled */
           const machineKey='machine:'+m.id;
           if(seen.has(providerId+'|'+machineKey)) return;
           if(start && hasProviderBookingConflict(providerId, machineKey, start, end)) return;
@@ -2479,27 +3003,93 @@ function listingMatchesRequest(listing,request){
 }
 function formatActivityArea(area){ if(!Array.isArray(area)||!area.length)return '—'; return area.map(x=>x.all||!x.cities?.length?x.province:x.province+': '+x.cities.join('، ')).join(' | '); }
 function calculateTotal(request,data,fallbackPrice){
-    const area=Number(request.data && request.data.area)||Number(request.data && request.data.amount)||1;
-    const price=Number(data&&data.price)||Number(fallbackPrice)||0;
-    const unit=(data&&data.priceUnit)||"";
-    if(unit.includes("هکتار")||unit.includes("تن")) return price*area;
-    return price||0;
+    const price = Number(data && data.price) || Number(fallbackPrice) || 0;
+    const unit = String((data && data.priceUnit) || '');
+    if(!request) return price;
+    const reqData = request.data || {};
+    if(unit.includes('هکتار')){
+        const area = Number(reqData.area) || Number(reqData.amount) || 0;
+        return price * area;
+    }
+    if(unit.includes('تن')){
+        const amount = Number(reqData.amount) || Number(reqData.area) || 0;
+        return price * amount;
+    }
+    if(unit.includes('روز')){
+        const start = parseStoredDate(reqData.dateStart || reqData.date);
+        const end = parseStoredDate(reqData.dateEnd || reqData.dateStart || reqData.date);
+        if(start && end){
+            const millisecondsPerDay = 24 * 60 * 60 * 1000;
+            const days = Math.floor((end.getTime() - start.getTime()) / millisecondsPerDay) + 1;
+            return price * Math.max(days,1);
+        }
+        return price;
+    }
+    if(unit.includes('سرویس')){
+        return price;
+    }
+    return price;
 }
 function generateOffersForRequest(request){ return getEligibleProvidersForRequest(request); }
 function generateOffersForListing(listing){ return; }
 
-function sendRequestToProvider(providerId, requestId){
+async function rejectIncomingProposal(recipientId, requestId){
+    if(!confirm('رد این درخواست؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{
+            applyServerSnapshot(await window.KeloBackend.rejectRecipient(recipientId));
+            showToast('درخواست رد شد','success');
+            openRequestOffersMap(requestId);
+        }catch(err){
+            showToast((err&&err.body&&err.body.error)||'رد درخواست انجام نشد.','error');
+        }
+        return;
+    }
+    const rec = db.requestRecipients.find(x=>x.id===recipientId);
+    if(rec){ rec.status='rejected'; rec.respondedAt=new Date().toISOString(); saveDB(); }
+    showToast('درخواست رد شد','success');
+    openRequestOffersMap(requestId);
+}
+async function cancelRecipient(recipientId, requestId){
+    if(!confirm('لغو ارسال کار برای این ارائه‌دهنده؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{
+            applyServerSnapshot(await window.KeloBackend.cancelRecipient(recipientId));
+            showToast('ارسال لغو شد','success');
+            openRequestOffersMap(requestId);
+        }catch(err){
+            showToast((err&&err.body&&err.body.error)||'لغو ارسال انجام نشد.','error');
+        }
+        return;
+    }
+    const rec = db.requestRecipients.find(x=>x.id===recipientId);
+    if(rec){ rec.status='closed'; rec.closedAt=new Date().toISOString(); saveDB(); }
+    showToast('ارسال لغو شد','success');
+    openRequestOffersMap(requestId);
+}
+async function sendRequestToProvider(providerId, requestId){
     const request=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
     if(!request){ showToast('درخواست پیدا نشد','error'); return; }
     if(request.status==='accepted' || request.status==='agreed' || request.status==='in_progress' || request.status==='completed'){
         showToast('این درخواست قبلاً توافق شده است','error'); return;
     }
+    if(hasActiveProposalBetweenUsers(request.userId, providerId)){
+        showToast('بین شما و این کاربر یک پیشنهاد فعال وجود دارد','error');
+        return;
+    }
     if(db.requestRecipients.some(x=>x.requestId===requestId && x.providerId===providerId && ['pending','accepted'].includes(x.status))){
         showToast('این درخواست قبلاً برای این ماشین‌دار ارسال شده است','error'); return;
     }
 
-    const candidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===providerId);
+    const candidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===providerId)||{providerId:providerId,listingId:null,machineId:null,unitPrice:0,priceUnit:"",location:"",rating:null};
     if(!candidate){ showToast('این ماشین‌دار در حال حاضر برای این تاریخ در دسترس نیست','error'); return; }
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{
+            applyServerSnapshot(await window.KeloBackend.sendRecipient(requestId,{providerId:providerId,machineId:null,listingId:candidate.listingId||null,unitPrice:candidate.unitPrice,priceUnit:candidate.priceUnit,location:candidate.location}));
+            showToast('درخواست برای ماشین‌دار ارسال شد','success'); openRequestOffersMap(requestId); updateMobileHeader('ارائه‌دهندگان خدمت');
+        }catch(err){showToast((err&&err.body&&err.body.error)||'ارسال درخواست انجام نشد.','error');}
+        return;
+    }
 
     const recipient={
         id:'rr'+Date.now()+Math.random().toString(36).slice(2,7),
@@ -2527,10 +3117,15 @@ function sendRequestToProvider(providerId, requestId){
 function providerHasUnfinishedDeal(providerId){
     return db.deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
 }
-function acceptOffer(id){
+async function acceptOffer(id){
     const recipient=db.requestRecipients.find(x=>x.id===id && x.providerId===currentUser.id && x.status==='pending');
     if(!recipient) {
         if(db.requestRecipients.some(x=>x.id===id && x.status!=='pending')) showToast('این درخواست دیگر قابل پذیرش نیست','error');
+        return;
+    }
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{ const result=await window.KeloBackend.acceptRecipient(id); applyServerSnapshot(result); showToast('کار با شما توافق شد','success'); setMobileOrdersSubTab('deals'); setMobileTab('proposals'); }
+        catch(err){ showToast((err&&err.body&&err.body.error)||'پذیرش درخواست انجام نشد.','error'); await refreshServerSnapshot(true); }
         return;
     }
     const request=db.requests.find(r=>r.id===recipient.requestId);
@@ -2618,7 +3213,8 @@ function acceptOffer(id){
     setMobileOrdersSubTab('deals');
     setMobileTab('proposals');
 }
-function payDeal(dealId){
+async function payDeal(dealId){
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){ showToast('پرداخت آنلاین در مرحله اتصال درگاه پرداخت فعال می‌شود.','info'); return; }
     const d=db.deals.find(x=>x.id===dealId && x.userId===currentUser.id);
     if(!d || d.status==='completed' || d.status==='cancelled') return;
     if(d.paymentStatus==='paid'){ showToast('این توافق قبلاً پرداخت شده است','success'); return; }
@@ -2637,26 +3233,32 @@ function routeToDeal(dealId){
     if(!req){ showToast('درخواست پیدا نشد','error'); return; }
     openRequestLocationMap(req.id);
 }
-function cancelDeal(dealId){
+async function cancelDeal(dealId){
     const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed');
     if(!d) return;
     if(!confirm('این کار لغو شود؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{applyServerSnapshot(await window.KeloBackend.cancelDeal(dealId));showToast('کار لغو شد','success');renderMobileProposals();}catch(err){showToast((err&&err.body&&err.body.error)||'لغو کار انجام نشد.','error');}return;
+    }
     d.status='cancelled';
     d.cancelledAt=new Date().toISOString();
-    const req=db.requests.find(r=>r.id===d.requestId);
-    if(req && req.status!=='completed') req.status='cancelled';
     const booking=db.bookings.find(b=>b.id===d.bookingId);
     if(booking) booking.status='cancelled';
     const recs=db.requestRecipients.filter(x=>x.requestId===d.requestId);
-    recs.forEach(x=>{ if(x.status==='accepted') x.status='closed'; });
+    recs.forEach(function(x){
+        if(x.status==='accepted'){ x.status='closed'; x.closedAt=new Date().toISOString(); }
+        else if(x.status==='closed' && !x.respondedAt){ x.status='pending'; x.closedAt=null; }
+    });
     saveDB();
     showToast('کار لغو شد','success');
     renderMobileProposals();
 }
-function completeDeal(dealId){
+async function completeDeal(dealId){
     const d=db.deals.find(x=>x.id===dealId && x.providerId===currentUser.id && x.status!=='completed' && x.status!=='cancelled');
     if(!d) return;
-    if(!isDealPastEnd(d)){ showToast('اتمام کار در پایان زمان ثبت‌شده فعال می‌شود','error'); return; }
+        if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        try{applyServerSnapshot(await window.KeloBackend.completeDeal(dealId));showToast('اتمام کار ثبت شد','success');renderMobileProposals();}catch(err){showToast((err&&err.body&&err.body.error)||'ثبت اتمام کار انجام نشد.','error');}return;
+    }
     d.status='completed';
     d.completedAt=new Date().toISOString();
     const req=db.requests.find(r=>r.id===d.requestId);
@@ -2725,7 +3327,9 @@ document.addEventListener('DOMContentLoaded', async function(){
             const preStyle = document.getElementById('keloPreloadHideLanding');
             if(preStyle) preStyle.remove();
             if(serverUser){
-                enterAuthenticatedUser(serverUser);
+                enterAuthenticatedUser(serverUser,{render:false});
+                await refreshServerSnapshot(true);
+                if(!currentUser.profileCompleted) showCompleteProfile();
             }else{
                 const landing=document.getElementById('landing');
                 const app=document.getElementById('app');

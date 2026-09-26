@@ -15,7 +15,7 @@ Kelo یک حساب کاربری واحد دارد. کاربر هنگام ورو�
 ```text
 GitHub → Vercel → kelo-marketplace.vercel.app
 ```
-Vercel در این مرحله فقط برای تست نسخه استاتیک استفاده می‌شود.
+Vercel می‌تواند برای تست استاتیک استفاده شود؛ در صورت وجود API هم‌مبدأ، Frontend به حالت server می‌رود.
 
 ### Target production
 ```text
@@ -33,7 +33,7 @@ Browser
   → HttpOnly cookie: kelo.sid
 ```
 
-در Production، session و User منبع حقیقت سمت سرور هستند و `localStorage` منبع احراز هویت نیست.
+در Production، session و PostgreSQL منبع حقیقت سمت سرور هستند. `localStorage` فقط برای draft/UI است و منبع داده Marketplace نیست.
 
 ## Current frontend compatibility
 
@@ -48,3 +48,16 @@ Browser
 UI فعلی به‌منظور حفظ ظاهر و جریان موجود همچنان شماره موبایل + کد ملی را می‌گیرد. کد ملی در Backend به‌صورت lookup HMAC + verifier کند + ciphertext رمزگذاری‌شده نگهداری می‌شود.
 
 برای انتشار عمومی Kelo، مرحله بعدی تبدیل ورود به SMS OTP است؛ session architecture فعلی حفظ می‌شود.
+
+## Marketplace data flow (V06)
+
+```text
+Browser
+  → Express API
+  → PostgreSQL
+  → requests / service_listings / request_recipients
+  → atomic accept
+  → bookings / deals
+```
+
+پذیرش درخواست با قفل سطری روی Request و Transaction سمت PostgreSQL انجام می‌شود تا دو ارائه‌دهنده نتوانند یک درخواست را همزمان قبول کنند.

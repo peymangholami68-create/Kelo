@@ -10,7 +10,8 @@ const pool = new Pool({
   max: Number(process.env.DB_POOL_MAX || 10),
   idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
   connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 5000),
-  application_name: 'kelo-api'
+  application_name: 'kelo-api',
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined
 });
 
 pool.on('error', (err) => {

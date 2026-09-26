@@ -1,0 +1,1 @@
+ALTER TABLE service_listings ADD COLUMN IF NOT EXISTS data jsonb NOT NULL DEFAULT '{}'::jsonb;

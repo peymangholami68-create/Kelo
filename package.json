@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server/app.js",
     "check": "node --check server/app.js && node --check backend/kelo-backend.js && node --check js/app.js",
-    "db:apply": "psql \"$DATABASE_URL\" -f database/migrations/001_auth.sql"
+    "db:apply": "psql \"$DATABASE_URL\" -f database/migrations/001_auth.sql",
+    "smoke:two-users": "node scripts/two-browser-smoke.js",
+    "smoke:auth-relogin": "node scripts/auth-relogin-smoke.js"
   },
   "engines": {
     "node": ">=22"

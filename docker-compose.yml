@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: kelo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
-      - kelo_pgdata:/var/lib/postgresql/data
+      - kelo_v061_pgdata:/var/lib/postgresql/data
       - ./database/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kelo -d kelo"]
@@ -19,7 +19,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgresql://kelo:${POSTGRES_PASSWORD:-change-me}@db:5432/kelo
       DATABASE_SSL: "false"
@@ -29,7 +29,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3000"
 
 volumes:
-  kelo_pgdata:
+  kelo_v061_pgdata:

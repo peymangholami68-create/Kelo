@@ -34,6 +34,8 @@ app.disable('x-powered-by');
 app.set('trust proxy', IS_PROD ? 1 : 0);
 app.use(express.json({ limit: '256kb' }));
 
+const marketplaceRoutes = require('./routes/marketplace');
+
 const PgStore = connectPgSimple(session);
 app.use(session({
   name: 'kelo.sid',
@@ -55,6 +57,8 @@ app.use(session({
     path: '/'
   }
 }));
+
+app.use('/api', marketplaceRoutes);
 
 app.use(express.static(ROOT, { index: false, maxAge: IS_PROD ? '1h' : 0 }));
 
@@ -97,7 +101,7 @@ function hashNationalId(nationalId) {
 function verifyNationalId(nationalId, encoded) {
   const parts = String(encoded || '').split(':');
   if (parts.length !== 2) return false;
-  const salt = Buffer.from(parts[0], 'hex');
+  const salt = parts[0];
   const stored = Buffer.from(parts[1], 'hex');
   const derived = crypto.scryptSync(nationalId, salt, stored.length, { N: 16384, r: 8, p: 1 });
   return stored.length === derived.length && crypto.timingSafeEqual(stored, derived);
@@ -288,8 +292,20 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const user = mapUserRow(userRow);
+
+    // Always rotate the session on successful authentication. This prevents a
+    // stale session from a previous account/tab from being reused after logout
+    // or when a different user signs in in the same browser.
+    await new Promise((resolve, reject) => {
+      req.session.regenerate(error => error ? reject(error) : resolve());
+    });
     req.session.userId = user.id;
     req.session.authMode = authMode;
+    await new Promise((resolve, reject) => {
+      req.session.save(error => error ? reject(error) : resolve());
+    });
+
+    res.set('Cache-Control', 'no-store');
     return res.json({ ok: true, created, user });
   } catch (error) {
     console.error('login:', error);

@@ -1,6 +1,6 @@
 # KELO | بازار خدمات کشاورزی
 
-این Repository نسخه‌ی چندفایلی Kelo است و اکنون مرحله‌ی **Login → Session → Users → PostgreSQL** به‌صورت واقعی برای استقرار روی VPS آماده شده است.
+این Repository نسخه‌ی چندفایلی Kelo است و اکنون **Login → Session → PostgreSQL + Marketplace API** به‌صورت واقعی برای استقرار روی VPS آماده است؛ جریان Request → Listing → Recipient → Booking → Deal نیز سمت سرور اجرا می‌شود.
 
 ## معماری
 
@@ -54,7 +54,7 @@ Session در PostgreSQL نگهداری می‌شود و Browser فقط session I
 `backend/kelo-backend.js` ابتدا `/api/health` را بررسی می‌کند:
 
 - **API موجود** → Login واقعی و PostgreSQL.
-- **API اصلاً وجود ندارد** → Prototype `localStorage` برای تست Vercel.
+- در حالت Production، Marketplace از API و PostgreSQL استفاده می‌کند؛ `localStorage` فقط برای draft/UI و fallback نسخه استاتیک باقی مانده است.
 - **API وجود دارد ولی unhealthy است** → خطا؛ برنامه به دیتابیس جعلی fallback نمی‌کند.
 
 بنابراین یک Repository می‌تواند برای هر دو محیط استفاده شود، بدون بازنویسی UI.

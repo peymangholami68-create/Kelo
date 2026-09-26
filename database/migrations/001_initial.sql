@@ -4,7 +4,6 @@
 -- requests and/or provide services. System roles are separate.
 
 create extension if not exists pgcrypto;
-create extension if not exists postgis;
 
 create type system_role as enum ('admin', 'support', 'superadmin');
 create type listing_status as enum ('draft', 'active', 'paused', 'blocked', 'expired');
@@ -50,7 +49,7 @@ create table if not exists machines (
   owner_id uuid not null references users(id) on delete restrict,
   name text,
   machine_type text not null,
-  location geography(point, 4326),
+  location jsonb,
   location_label text,
   rating numeric(3,2) not null default 0,
   completed_jobs integer not null default 0,
@@ -103,7 +102,7 @@ create table if not exists requests (
   area_ha numeric(10,2),
   date_start date not null,
   date_end date,
-  service_location geography(point, 4326),
+  service_location jsonb,
   service_location_label text,
   data jsonb not null default '{}'::jsonb,
   note text,
@@ -240,12 +239,10 @@ create table if not exists app_settings (
 );
 
 create index if not exists idx_machines_owner on machines(owner_id);
-create index if not exists idx_machines_location on machines using gist(location);
 create index if not exists idx_listings_provider_status on service_listings(provider_id, status);
 create index if not exists idx_listings_service_status on service_listings(service_type_id, status);
 create index if not exists idx_requests_requester on requests(requester_id);
 create index if not exists idx_requests_service_status on requests(service_type_id, status);
-create index if not exists idx_requests_location on requests using gist(service_location);
 create index if not exists idx_recipients_provider_status on request_recipients(provider_id, status);
 create index if not exists idx_bookings_machine_dates on bookings(machine_id, start_date, end_date);
 create index if not exists idx_bookings_provider_dates on bookings(provider_id, start_date, end_date);
