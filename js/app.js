@@ -1154,7 +1154,13 @@ function submitMobileForm(){
     let ok = true;
     for(let i=0;i<fields.length;i++){ if(!validateMobileField(fields[i])) ok = false; }
     if(!ok){ const err = document.querySelector('#keloFormSheetBackdrop .field-error'); if(err) err.scrollIntoView({behavior:'smooth', block:'center'}); return; }
-    Object.keys(wizard.serviceOptions || {}).forEach(function(k){ wizard.data[k] = wizard.serviceOptions[k]; });
+    // Only merge service-sub-option keys; never clobber main form fields
+    // (area, dates, price, ...) which live in wizard.data and may be newer.
+    const formFieldIds = {};
+    mobileL2Fields().forEach(function(f){ formFieldIds[f[0]] = true; });
+    Object.keys(wizard.serviceOptions || {}).forEach(function(k){
+        if (!formFieldIds[k]) wizard.data[k] = wizard.serviceOptions[k];
+    });
     finalizeMobileForm();
 }
 async function finalizeMobileForm(){
@@ -1165,8 +1171,20 @@ async function finalizeMobileForm(){
     const data = cloneObject(wizard.data || {});
     fields.forEach(function(f){
         const id = f[0], type = f[2];
+        if (type === 'areaSlider') {
+            const range = document.querySelector('input[type=range][data-slider-id="' + id + '"]');
+            if (range) data[id] = Number(range.value) || 0;
+            return;
+        }
         const el = document.getElementById('wf_' + id);
-        if(type === 'file' && el) data[id] = Array.from(el.files || []).map(function(x){ return x.name; });
+        if (!el) return;
+        if (type === 'file') {
+            data[id] = Array.from(el.files || []).map(function(x){ return x.name; });
+        } else if (type === 'number') {
+            data[id] = el.value === '' ? '' : Number(el.value);
+        } else {
+            data[id] = el.value;
+        }
     });
     if(data.dateStart) data.date = data.dateStart;
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
@@ -1204,12 +1222,23 @@ async function finalizeMobileForm(){
         db.listings.push(listing); saveDB();
         newId = listing.id;
     }
+    const wasEdit = !!wizard.editRequestId;
     clearWizardDraft(); closeMobileFormSheet();
+    if (wasEdit) {
+        mobileRequestSuccess = false;
+        mobileSuccessData = null;
+        try { sessionStorage.removeItem('kelo_mobile_success'); } catch (e) {}
+        resetMobileWizardFlow();
+        showToast('درخواست به‌روزرسانی شد', 'success');
+        mobileOrdersSubTab = 'requests';
+        setMobileTab('proposals');
+        return;
+    }
     mobileRequestSuccess = true;
-    mobileSuccessData = { type: savedType, service: savedService, id: newId, ts: Date.now(), updated: !!wizard.editRequestId };
+    mobileSuccessData = { type: savedType, service: savedService, id: newId, ts: Date.now(), updated: false };
     try{ sessionStorage.setItem('kelo_mobile_success', JSON.stringify(mobileSuccessData)); }catch(e){}
     resetMobileWizardFlow();
-    renderMobileRequest();
+    setMobileTab('request');
 }
 function renderMobileSuccessScreen(){
     const sb = document.getElementById('sidebar');
@@ -1320,8 +1349,13 @@ function editRequest(requestId){
     wizard.type=(req.requestKind==='provide')?'provide':'receive';
     wizard.formSheetOpen=true;
     wizard.service=req.service;
-    wizard.serviceOptions=cloneObject(req.data || {});
     wizard.data=cloneObject(req.data || {});
+    wizard.serviceOptions={};
+    // Only service sub-options belong in serviceOptions (not area/dates/price/...)
+    const l3 = (SERVICE_L3_FIELDS && SERVICE_L3_FIELDS[req.service]) || [];
+    l3.forEach(function(sf){
+        if (req.data && req.data[sf.id] !== undefined) wizard.serviceOptions[sf.id] = cloneObject(req.data[sf.id]);
+    });
     wizard.editRequestId=req.id;
     if(!wizard.data.dateStart) wizard.data.dateStart=wizard.data.date||localDateToIso(new Date());
     document.documentElement.setAttribute('data-form-theme', wizard.type === 'provide' ? 'orange' : 'blue');
@@ -1685,26 +1719,25 @@ function renderMobileDealsList(){
         const subLine = isFarmer ? machine : (area ? (toPersianDigits(area) + ' هکتار') : '');
         const _chip = computeDealChip(d);
         const showReport = !hasUserReviewedDeal(d.id);
-        let action='';
-        if(isFarmer){
+        let action = '';
+        if (d.status === 'cancelled') {
+            action = '';
+        } else if (d.status === 'completed') {
+            action = '<div class="offer-card-price" style="text-align:center">✓ کار تمام شده</div>'
+                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+        } else if (isFarmer) {
             action = '<div class="offer-actions-row">'
                 + '<button type="button" class="btn btn-brand" onclick="openPaymentOptions(\'' + d.id + '\')">' + (d.paymentStatus==='paid'?'پرداخت شده':'پرداخت') + '</button>'
                 + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
                 + '</div>'
                 + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
         } else {
-            if(d.status==='completed'){
-                action = '<div class="offer-card-price" style="text-align:center">✓ کار تمام شده</div>'
-                    + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
-            } else {
-                action = '<div class="offer-actions-row">'
-                    + '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>'
-                    + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
-                    + '</div>'
-                    + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
-            }
+            action = '<div class="offer-actions-row">'
+                + '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>'
+                + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                + '</div>'
+                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
         }
-                if(d.status==='cancelled') action = '';
         const locDateLine = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:4px 0;flex-wrap:wrap">'
             + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(city) + '</span>'
             + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
@@ -2902,18 +2935,25 @@ function getProviderIdentityFromListing(listing){
         data:listing.data || {}
     };
 }
-function hasActiveProposalBetweenUsers(userA, userB){
-    if(!userA || !userB) return false;
+function hasActiveProposalForRequest(requestId, userA, userB){
+    if(!requestId || !userA || !userB) return false;
     const a = String(userA);
     const b = String(userB);
     if(a === b) return false;
+
     return db.requestRecipients.some(function(rec){
-        if(rec.status !== 'pending') return false;
-        const relatedRequest = db.requests.find(function(r){ return r.id === rec.requestId; });
+        if(String(rec.requestId) !== String(requestId)) return false;
+        if(rec.status !== 'pending' && rec.status !== 'accepted') return false;
+
+        const relatedRequest = db.requests.find(function(r){
+            return String(r.id) === String(requestId);
+        });
         if(!relatedRequest) return false;
-        const proposerId  = rec.proposerId  || relatedRequest.userId;
+
+        const proposerId = rec.proposerId || relatedRequest.userId;
         const recipientId = rec.recipientId || rec.providerId;
         if(!proposerId || !recipientId) return false;
+
         const p = String(proposerId);
         const r = String(recipientId);
         return (p === a && r === b) || (p === b && r === a);
@@ -2931,6 +2971,8 @@ function getEligibleProvidersForRequest(request){
           if(!listingMatchesRequest(l,request)) return;
           if(!listingAvailableForRequest(l, start, end)) return;
           if(start && hasProviderBookingConflict(l.userId, l.id, start, end)) return;
+          // Do NOT filter out providers with an active proposal here.
+          // They must remain in the list so the sheet can show «لغو ارسال».
           const p=getProviderIdentityFromListing(l);
           const key=p.providerId+'|'+(p.listingId||'');
           if(seen.has(key)) return;
@@ -2944,7 +2986,7 @@ function getEligibleProvidersForRequest(request){
           const ownerUser=db.users.find(u=>u.name===m.owner);
           const providerId=ownerUser?.id || ('machine-owner:'+m.owner);
           if(providerId===request.userId) return;
-          /* disabled */
+          // Keep providers with pending send in the list (button toggles to cancel).
           const machineKey='machine:'+m.id;
           if(seen.has(providerId+'|'+machineKey)) return;
           if(start && hasProviderBookingConflict(providerId, machineKey, start, end)) return;
@@ -3073,8 +3115,8 @@ async function sendRequestToProvider(providerId, requestId){
     if(request.status==='accepted' || request.status==='agreed' || request.status==='in_progress' || request.status==='completed'){
         showToast('این درخواست قبلاً توافق شده است','error'); return;
     }
-    if(hasActiveProposalBetweenUsers(request.userId, providerId)){
-        showToast('بین شما و این کاربر یک پیشنهاد فعال وجود دارد','error');
+    if(hasActiveProposalForRequest(requestId, request.userId, providerId)){
+        showToast('در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد','error');
         return;
     }
     if(db.requestRecipients.some(x=>x.requestId===requestId && x.providerId===providerId && ['pending','accepted'].includes(x.status))){
@@ -3234,7 +3276,7 @@ function routeToDeal(dealId){
     openRequestLocationMap(req.id);
 }
 async function cancelDeal(dealId){
-    const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed');
+    const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed' && x.status!=='cancelled');
     if(!d) return;
     if(!confirm('این کار لغو شود؟')) return;
     if(window.KeloBackend && window.KeloBackend.isServerMode()){

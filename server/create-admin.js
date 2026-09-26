@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { query, pool } = require('./db');
-const { normalizePhone, normalizeNationalId, validPhone, validNationalId } = require('./auth');
+const { normalizePhone, normalizeNationalId, validPhone, validNationalId } = require('./lib/normalize');
 
 async function main() {
   const phone = normalizePhone(process.env.KELO_ADMIN_PHONE);

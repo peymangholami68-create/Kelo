@@ -151,7 +151,10 @@ async function getServiceId(client, slug) {
   return r.rows[0]?.id || null;
 }
 
+let _closingExpired = false;
 async function closeExpiredRecipients() {
+  if (_closingExpired) return; // don't overlap runs if one is still in flight
+  _closingExpired = true;
   try {
     const result = await pool.query(`
       UPDATE request_recipients
@@ -168,11 +171,22 @@ async function closeExpiredRecipients() {
     }
   } catch (e) {
     console.error('closeExpiredRecipients failed:', e.message);
+  } finally {
+    _closingExpired = false;
   }
 }
 
+// Runs on a timer instead of on every getSnapshot() call — this used to run
+// once per API request (bootstrap, every mutation, ...), which meant an
+// UPDATE statement on nearly every request just to catch a handful of
+// requests whose date has passed. Once every 5 minutes is more than enough
+// for something that only depends on the calendar date, not the second.
+const CLOSE_EXPIRED_INTERVAL_MS = 5 * 60 * 1000;
+closeExpiredRecipients();
+const _closeExpiredTimer = setInterval(closeExpiredRecipients, CLOSE_EXPIRED_INTERVAL_MS);
+if (typeof _closeExpiredTimer.unref === 'function') _closeExpiredTimer.unref();
+
 async function getSnapshot(userId) {
-  await closeExpiredRecipients();
   const [requests, listings, recipients, bookings, deals, payments, machines, reviews] = await Promise.all([
     pool.query(`select r.*, p.full_name requester_name, s.slug service_slug, s.name service_name
       from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
@@ -214,8 +228,8 @@ router.post('/reviews', auth, async(req,res,next)=>{
     const answeredCount = Object.keys(ratings).length;
     if(answeredCount === 0 && !note){ return res.status(400).json({ok:false,error:'حداقل یک امتیاز یا نظر لازم است.'}); }
 
-    const deal = (await pool.query('select * from deals where id=$1 and (requester_id=$2 or provider_id=$2)', [dealId, req.session.userId])).rows[0];
-    if(!deal){ return res.status(404).json({ok:false,error:'توافق پیدا نشد.'}); }
+    const deal = (await pool.query("select * from deals where id=$1 and (requester_id=$2 or provider_id=$2) and status='completed'", [dealId, req.session.userId])).rows[0];
+    if(!deal){ return res.status(404).json({ok:false,error:'فقط پس از تکمیل کار می‌توانید نظر ثبت کنید.'}); }
 
     const isFarmer = String(deal.requester_id) === String(req.session.userId);
     const targetId = isFarmer ? deal.provider_id : deal.requester_id;
@@ -303,7 +317,9 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
   if(!r.rows[0]) return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});
   const request=r.rows[0];
   const out=[];
-  const __blockedUserIds=new Set();
+  // Do not hide providers who already have a pending/accepted proposal on this
+  // request — the farmer sheet needs them visible so the button can toggle to
+  // «لغو ارسال». Duplicate-send is still blocked on POST /recipients.
   if(request.request_kind==='need'){
     const listings=await pool.query(`select l.id listing_id,l.provider_id,l.machine_id,l.machine_type,l.capacity,l.price,l.price_unit,l.activity_area,l.location_label,l.availability_start,l.availability_end,l.data listing_data,p.full_name provider_name,s.slug service_slug
       from service_listings l join service_types s on s.id=l.service_type_id left join profiles p on p.user_id=l.provider_id
@@ -311,16 +327,16 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
         and (l.availability_start is null or l.availability_start <= $3)
         and (l.availability_end is null or l.availability_end >= coalesce($4,$3))
       order by l.price asc,l.created_at desc`,[request.requester_id,request.service_type_id,request.date_start,request.date_end]);
-    listings.rows.forEach(x=>{ if(__blockedUserIds.has(String(x.provider_id))) return; out.push({providerId:x.provider_id,provider:x.provider_name||'ارائه‌دهنده',machineId:x.machine_id,listingId:x.listing_id,service:x.service_slug,unitPrice:Number(x.price),priceUnit:x.price_unit,rating:null,location:x.location_label||'',data:Object.assign({}, x.listing_data||{}, {machineType:x.machine_type||'',capacity:x.capacity||'',price:Number(x.price),priceUnit:x.price_unit,activityArea:x.activity_area||[],dateStart:x.availability_start,dateEnd:x.availability_end})}); });
+    listings.rows.forEach(x=>{ out.push({providerId:x.provider_id,provider:x.provider_name||'ارائه‌دهنده',machineId:x.machine_id,listingId:x.listing_id,service:x.service_slug,unitPrice:Number(x.price),priceUnit:x.price_unit,rating:null,location:x.location_label||'',data:Object.assign({}, x.listing_data||{}, {machineType:x.machine_type||'',capacity:x.capacity||'',price:Number(x.price),priceUnit:x.price_unit,activityArea:x.activity_area||[],dateStart:x.availability_start,dateEnd:x.availability_end})}); });
     const provides=await pool.query(`select r.id request_id,r.requester_id,p.full_name requester_name,s.slug service_slug,r.data,r.area_ha,r.date_start,r.date_end,r.service_location_label
       from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
       where r.request_kind='provide' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
-    provides.rows.forEach(x=>{ if(__blockedUserIds.has(String(x.requester_id))) return; out.push({providerId:x.requester_id,provider:x.requester_name||'ارائه‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:Number(x.data?.price||0),priceUnit:x.data?.priceUnit||'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'provide'}}); });
+    provides.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'ارائه‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:Number(x.data?.price||0),priceUnit:x.data?.priceUnit||'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'provide'}}); });
   }else{
     const needs=await pool.query(`select r.id request_id,r.requester_id,p.full_name requester_name,s.slug service_slug,r.data,r.area_ha,r.date_start,r.date_end,r.service_location_label
       from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
       where r.request_kind='need' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
-    needs.rows.forEach(x=>{ if(__blockedUserIds.has(String(x.requester_id))) return; out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:0,priceUnit:'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'need'}}); });
+    needs.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:0,priceUnit:'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'need'}}); });
   }
   res.json({ok:true,providers:out});
 }catch(e){next(e)}});
@@ -334,7 +350,7 @@ router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=a
       if(!ownProvide.rowCount)return res.status(403).json({ok:false,error:'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.'});
     }
     const existing=await client.query(`select id from request_recipients where request_id=$1 and proposer_id=$2 and recipient_id=$3 and status in ('pending','accepted')`,[request.id,proposerId,recipientId]);if(existing.rowCount)return res.status(409).json({ok:false,error:'این پیشنهاد قبلاً ارسال شده است.'});
-    const __reciprocal=await client.query("select id from request_recipients where status='pending' and ((proposer_id=$1 and recipient_id=$2) or (proposer_id=$2 and recipient_id=$1)) limit 1",[proposerId,recipientId]);if(__reciprocal.rowCount)return res.status(409).json({ok:false,error:'بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
+    const __reciprocal=await client.query("select id from request_recipients where request_id=$1 and status in ('pending','accepted') and ((proposer_id=$2 and recipient_id=$3) or (proposer_id=$3 and recipient_id=$2)) limit 1",[request.id,proposerId,recipientId]);if(__reciprocal.rowCount)return res.status(409).json({ok:false,error:'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
     let unitPrice=listing?Number(listing.price):asNumber(b.unitPrice);
     let priceUnit=listing?listing.price_unit:(b.priceUnit||'');
     if(!listing){

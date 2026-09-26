@@ -3,7 +3,9 @@ const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const connectPgSimple = require('connect-pg-simple');
+const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
+const { normalizePhone, normalizeNationalId, validPhone, validNationalId } = require('./lib/normalize');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.PORT || 3000);
@@ -21,12 +23,28 @@ if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is required.');
 }
 
+// DATABASE_SSL='true' turns SSL on. Certificate verification is ON by default
+// once SSL is on — do not disable it unless you fully understand the risk.
+// Some managed Postgres providers use a certificate that isn't in Node's
+// default trust store; in that case set DATABASE_SSL_CA to the PEM contents
+// of the provider's CA certificate rather than turning verification off.
+const DATABASE_SSL_INSECURE = process.env.DATABASE_SSL_INSECURE === 'true';
+if (DATABASE_SSL_INSECURE) {
+  console.warn('[SECURITY WARNING] DATABASE_SSL_INSECURE=true — the database TLS certificate is NOT being verified. This allows man-in-the-middle attacks and must never be used in production.');
+}
+const sslConfig = process.env.DATABASE_SSL === 'true'
+  ? {
+      rejectUnauthorized: !DATABASE_SSL_INSECURE,
+      ca: process.env.DATABASE_SSL_CA || undefined
+    }
+  : undefined;
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   max: Number(process.env.DB_POOL_MAX || 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
-  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined
+  ssl: sslConfig
 });
 
 const app = express();
@@ -60,30 +78,40 @@ app.use(session({
 
 app.use('/api', marketplaceRoutes);
 
+// National ID is only 10 digits and acts as the second authentication
+// factor alongside phone — without a limit here, it is brute-forceable.
+// Keyed by IP by default; if the app sits behind a shared NAT/proxy for many
+// users, consider keying by phone+IP together instead.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.' }
+});
+
 app.use(express.static(ROOT, { index: false, maxAge: IS_PROD ? '1h' : 0 }));
 
-function normalizePhone(value) {
-  let p = String(value || '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/\s+/g, '').trim();
-  if (p.startsWith('+98')) p = '0' + p.slice(3);
-  else if (p.startsWith('98')) p = '0' + p.slice(2);
-  return p;
-}
-
-function normalizeNationalId(value) {
-  return String(value || '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/\D/g, '').trim();
-}
-
 function assertLoginInput(phone, nationalId) {
-  if (!/^09\d{9}$/.test(phone)) {
+  if (!validPhone(phone)) {
     const err = new Error('شماره تلفن همراه معتبر نیست.'); err.status = 400; throw err;
   }
-  if (!/^\d{10}$/.test(nationalId)) {
+  if (!validNationalId(nationalId)) {
     const err = new Error('کد ملی باید ۱۰ رقم باشد.'); err.status = 400; throw err;
   }
 }
 
+// Dedicated secret for national-ID encryption — kept separate from
+// SESSION_SECRET on purpose. Reusing one secret for two purposes (signing
+// sessions AND deriving an encryption key) means a leak of either use case
+// compromises the other; a distinct secret keeps that blast radius contained.
+const NATIONAL_ID_ENCRYPTION_KEY = process.env.NATIONAL_ID_ENCRYPTION_KEY;
+if (!NATIONAL_ID_ENCRYPTION_KEY && IS_PROD) {
+  throw new Error('NATIONAL_ID_ENCRYPTION_KEY is required in production.');
+}
+
 function getEncryptionKey() {
-  const raw = process.env.NATIONAL_ID_ENCRYPTION_KEY || SESSION_SECRET || 'development-only-change-me';
+  const raw = NATIONAL_ID_ENCRYPTION_KEY || 'development-only-change-me-encryption';
   return crypto.createHash('sha256').update(raw, 'utf8').digest();
 }
 
@@ -214,7 +242,7 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const phone = normalizePhone(req.body.phone);
     const nationalId = normalizeNationalId(req.body.nationalId);
