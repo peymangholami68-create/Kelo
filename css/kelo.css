@@ -380,7 +380,8 @@ html.kelo-app-active,body.kelo-app-active{overscroll-behavior:none}
 .app.mobile-tab-proposals .content > .mobile-orders-body{flex:1 1 auto;min-height:0;overflow-y:auto}
 
 .offer-actions-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-.offer-actions-row .btn{min-height:46px;font-size:14px;padding:8px 12px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.offer-actions-row .btn:disabled{opacity:.55;cursor:not-allowed}
+.offer-actions-row.single{grid-template-columns:1fr}
+.offer-actions-row .btn{width:100%;min-height:46px;font-size:14px;padding:8px 12px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.offer-actions-row .btn:disabled{opacity:.55;cursor:not-allowed}
 .btn-reject{background:#fff;border:1.5px solid #e6c9c5;color:#c0392b;font-weight:800}
 .btn-accept{background:var(--leaf);color:#fff;border:1.5px solid var(--leaf);font-weight:800}
 .offer-card-price{display:block;text-align:center;font-size:16px;font-weight:800;color:var(--leaf-dark);background:#eef5df;padding:9px 12px;border-radius:12px;margin-top:10px;font-variant-numeric:tabular-nums}
@@ -1204,4 +1205,62 @@ body.kelo-app-active #app .dashboard-grid{width:100%!important;max-width:100%!im
 }
 .request-offers-sheet.fullscreen .request-offers-sheet-body{
     padding-bottom: 90px;
+}
+
+/* Invoice deal cards (profile sheet) */
+.invoice-deal-card{padding:14px 14px 12px}
+.invoice-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.invoice-card-title{font-size:15px;font-weight:800;color:#1F1F1F;line-height:1.4;min-width:0}
+.invoice-rate-btn{flex:0 0 auto;border:0;background:transparent;color:var(--leaf-dark,#2f6b3a);font-size:13px;font-weight:800;padding:4px 2px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
+.invoice-rate-btn:active{opacity:.7}
+.invoice-rate-done{flex:0 0 auto;font-size:12px;font-weight:700;color:#8a928d}
+.invoice-card-name{font-size:14px;font-weight:700;color:#1F1F1F;line-height:1.5}
+.invoice-card-sub{font-size:12px;font-weight:600;color:#8a928d;margin-top:2px;line-height:1.5}
+.invoice-card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;flex-wrap:wrap}
+.invoice-card-amount,.invoice-card-date{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:700;color:#1F1F1F}
+.invoice-card-amount .kelo-icon-inline,.invoice-card-date .kelo-icon-inline{width:16px;height:16px;color:#6b736c;flex:0 0 auto}
+.invoice-card-amount .kelo-icon-inline svg,.invoice-card-date .kelo-icon-inline svg{width:100%;height:100%}
+
+
+/* Invoice detail sheet */
+.invoice-deal-card{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.invoice-detail-sheet{direction:rtl;text-align:right;padding-bottom:24px}
+.invoice-detail-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}
+.invoice-detail-heading{margin:0;font-size:18px;font-weight:900;color:#1F1F1F}
+.invoice-detail-block{display:flex;flex-direction:column;gap:12px}
+.invoice-detail-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;direction:rtl;width:100%}
+.invoice-detail-label{flex:0 0 auto;max-width:48%;font-size:13px;font-weight:600;color:#8a928d;text-align:right}
+.invoice-detail-value{flex:1 1 auto;font-size:14px;font-weight:800;color:#1F1F1F;text-align:left;min-width:0;word-break:break-word}
+.invoice-detail-divider{height:1px;background:#ecebe5;margin:16px 0}
+
+
+/* Schedule card lines + highlight from notif/calendar */
+.schedule-card{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.schedule-card-line{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:#5A635C;margin-top:4px;line-height:1.5}
+.schedule-card-line .kelo-icon-inline{width:15px;height:15px;color:#8a928d;flex:0 0 auto}
+.schedule-card-line .kelo-icon-inline svg{width:100%;height:100%}
+.notif-offer-card{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.kelo-card-highlight{outline:2px solid var(--leaf,#78a83f);outline-offset:2px;box-shadow:0 0 0 4px rgba(120,168,63,.25);transition:outline .2s,box-shadow .2s}
+
+
+/* گزارش مشکل روی کارت توافق — فقط متن، نه دکمه */
+.deal-problem-link-wrap{display:flex;justify-content:flex-end;margin-top:10px;padding-top:8px;border-top:1px solid #ecebe5}
+.deal-problem-link{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#8a928d;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+.deal-problem-link:active{opacity:.7;color:#5A635C}
+.deal-problem-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1.5px solid #b0b5ae;font-size:11px;font-weight:900;line-height:1;color:#8a928d}
+.deal-problem-intro{margin:0 0 14px;font-size:13px;color:#5A635C;line-height:1.7;text-align:right}
+.deal-problem-options{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.deal-problem-option{display:flex;align-items:center;gap:10px;padding:12px 10px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;text-align:right;direction:rtl}
+.deal-problem-option:active,.deal-problem-option:has(input:checked){background:#F2F2F2}
+.deal-problem-option input{flex:0 0 auto;accent-color:var(--leaf,#78a83f)}
+.deal-problem-option span{flex:1;font-size:14px;font-weight:600;color:#1F1F1F;line-height:1.5}
+
+
+/* kelo-activity-single-scroll: فقط یک اسکرول در شیت محدوده فعالیت */
+#keloActivityAreaSheet .mobile-sheet{overflow:hidden}
+#keloActivityAreaSheet .mobile-sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch}
+#keloActivityAreaSheet .activity-province-list,
+#keloActivityAreaSheet .activity-city-checklist{
+    max-height:none!important;
+    overflow:visible!important;
 }

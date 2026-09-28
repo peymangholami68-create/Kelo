@@ -216,17 +216,22 @@ function applyServerSnapshot(snapshot){
     });
     // Marketplace data is authoritative on the server. Keep localStorage only
     // as a harmless UI/draft cache; never treat it as the production database.
-    try {
-        const savedReviews = JSON.parse(localStorage.getItem('kelo_reviews') || '[]');
-        if (Array.isArray(savedReviews)) db.reviews = savedReviews;
-    } catch(e) { db.reviews = db.reviews || []; }
+    if (Array.isArray(data.reviews)) {
+        db.reviews = cloneObject(data.reviews);
+    } else {
+        try {
+            const savedReviews = JSON.parse(localStorage.getItem('kelo_reviews') || '[]');
+            if (Array.isArray(savedReviews)) db.reviews = savedReviews;
+        } catch(e) { db.reviews = db.reviews || []; }
+    }
     db._serverSyncedAt=Date.now();
 }
 async function refreshServerSnapshot(render){
     if(!(window.KeloBackend && window.KeloBackend.isServerMode())) return;
     const result=await window.KeloBackend.bootstrap();
     applyServerSnapshot(result);
-    if(render) renderApp();
+    // اگر پروفایل کامل نیست، renderApp صفحه تکمیل پروفایل را پاک نکند
+    if(render && currentUser && currentUser.profileCompleted) renderApp();
 }
 
 function enterAuthenticatedUser(user, options){
@@ -323,8 +328,9 @@ async function login(e){
             const result = await window.KeloBackend.login(phone, nationalId, authMode);
             if(result && result.user){
                 enterAuthenticatedUser(result.user, { created: !!result.created, render:false });
-                await refreshServerSnapshot(true);
+                await refreshServerSnapshot(false);
                 if(!currentUser.profileCompleted) showCompleteProfile();
+                else renderApp();
                 return;
             }
             showAuthError('ورود انجام نشد.');
@@ -354,7 +360,7 @@ async function adminLoginValues(phone,nationalId){
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
             const result = await window.KeloBackend.login(phone, nationalId, 'admin');
-            if(result && result.user){ enterAuthenticatedUser(result.user,{render:false}); await refreshServerSnapshot(true); if(!currentUser.profileCompleted) showCompleteProfile(); return; }
+            if(result && result.user){ enterAuthenticatedUser(result.user,{render:false}); await refreshServerSnapshot(false); if(!currentUser.profileCompleted) showCompleteProfile(); else renderApp(); return; }
             showAuthError('اطلاعات ورود مدیر صحیح نیست.');
         }catch(err){ showAuthError('اطلاعات ورود مدیر صحیح نیست.'); }
         return;
@@ -382,6 +388,17 @@ function profileMapPickerHtml(placeholderText){
 
 function showCompleteProfile(){
     document.getElementById("sidebar").innerHTML="";
+    // جلوی تب ثبت‌درخواست سفید و ناوبری قبل از تکمیل پروفایل
+    try{ sessionStorage.removeItem(TAB_KEY); }catch(e){}
+    window.__keloMobileTab = null;
+    const appEl = document.getElementById('app');
+    if(appEl){
+        appEl.classList.remove('mobile-tab-home','mobile-tab-request','mobile-tab-proposals','mobile-tab-request-offers');
+        appEl.classList.add('mobile-tab-profile-edit');
+    }
+    const nav = document.getElementById('mobileBottomNav');
+    if(nav) nav.classList.add('hidden');
+    updateMobileHeader('تکمیل پروفایل');
     const name = currentUser.name || '';
     const loc = currentUser.profileLocation;
     const previewRaw = wizard._pendingProfileLocation || loc;
@@ -420,9 +437,6 @@ function showCompleteProfile(){
             autoDetectProfileLocation('first');
         }
     });
-    const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.add('hidden');
-    const app=document.getElementById('app');
-    if(app) app.classList.add('mobile-tab-profile-edit');
 }
 
 async function saveFirstProfile(e){
@@ -649,47 +663,72 @@ function mobileAccountProfileMarkup(){
 }
 
 function mobileAccountInvoiceMarkup(){
-    const deals = (db.deals||[]).filter(d => isDealForUser(d) && d.status!=='cancelled');
-    const payments = (db.payments||[]).filter(p => p.status==='paid');
-    const paidDealIds = new Set(payments.map(p=>p.dealId));
-    const paidDeals = deals.filter(d => paidDealIds.has(d.id) || d.paymentStatus==='paid');
+    // فقط کارهای انجام‌شده (status=completed)
+    const completedDeals = (db.deals||[]).filter(function(d){
+        return isDealForUser(d) && d.status === 'completed';
+    }).slice().sort(function(a,b){
+        return String(b.completedAt || b.createdAt || '').localeCompare(String(a.completedAt || a.createdAt || ''));
+    });
 
-    const totalWorkCount = paidDeals.length;
-    const paidByMe = paidDeals
-        .filter(d => d.userId===currentUser.id)
-        .reduce((sum,d) => sum + (Number(d.total)||0), 0);
-    const receivedByMe = paidDeals
-        .filter(d => d.providerId===currentUser.id)
-        .reduce((sum,d) => sum + (Number(d.total)||0), 0);
+    const totalWorkCount = completedDeals.length;
+    const paidByMe = completedDeals
+        .filter(function(d){ return String(d.userId) === String(currentUser.id); })
+        .reduce(function(sum,d){ return sum + (Number(d.total)||0); }, 0);
+    const receivedByMe = completedDeals
+        .filter(function(d){ return String(d.providerId) === String(currentUser.id); })
+        .reduce(function(sum,d){ return sum + (Number(d.total)||0); }, 0);
 
-    const cards = paidDeals.length ? paidDeals.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).map(d=>{
-        const req=db.requests.find(r=>r.id===d.requestId);
-        const date=requestDate(req||{});
-        const isRequester=d.userId===currentUser.id;
-        const role=isRequester?'دریافت خدمت':'ارائه خدمت';
-        const status=isRequester?'پرداخت‌شده':'دریافت‌شده';
-        const total=Number(d.total)||0;
-        return '<div class="mobile-activity-card">'
-            +'<div class="activity-row">'
-            +'<div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(d.service))+'</strong><span class="activity-meta">'+escapeHtml([date,role,d.counterparty||''].filter(Boolean).join(' · '))+'</span></div>'
-            +'<div class="mobile-activity-status completed">'+escapeHtml(status)+'</div></div>'
-            +'<div class="offer-card-price">'+(total?formatMoney(total):'—')+'</div>'
-            +'<span class="offer-card-price-unit">'+(isRequester?'مبلغ پرداخت‌شده این کار':'مبلغ دریافت‌شده این کار')+'</span>'
-            +'</div>';
-    }).join('') : keloEmptyStateHtml('هنوز فاکتوری ندارید','پس از ثبت پرداخت، صورتحساب‌های شما در این بخش نمایش داده می‌شود.');
+    const cards = completedDeals.length ? completedDeals.map(function(d){
+        const req = db.requests.find(function(r){ return r.id === d.requestId; });
+        const isFarmer = String(d.userId) === String(currentUser.id);
+        const cp = dealCounterparty(d);
+        const cpName = (cp && cp.name) ? cp.name : (d.counterparty || '—');
+        const title = dealInvoiceServiceTitle(d, req);
+        const machine = (req && req.data && req.data.machineType) ? req.data.machineType
+            : (d.providerMachineType || '');
+        const areaRaw = (req && req.data && (req.data.area || req.data.amount))
+            ? (req.data.area || req.data.amount)
+            : (d.requestArea || null);
+        const subLine = isFarmer
+            ? (machine || '')
+            : (areaRaw ? (toPersianDigits(areaRaw) + ' هکتار') : '');
+        const total = Number(d.total) || 0;
+        const startIso = (req && req.data && (req.data.dateStart || req.data.date))
+            || d.dateStart || null;
+        const endIso = (req && req.data && req.data.dateEnd) || d.dateEnd || null;
+        const dateLabel = formatDealRangeDate(startIso, endIso);
+        const myAvg = getMyReviewAverageForDeal(d.id);
+        const rateBtn = myAvg != null
+            ? '<span class="invoice-rate-done">' + toPersianDigits(myAvg.toFixed(1)) + ' ★</span>'
+            : '<button type="button" class="invoice-rate-btn" onclick="event.stopPropagation();openDealReport(\'' + d.id + '\')">ثبت امتیاز</button>';
+
+        return '<div class="mobile-activity-card kelo-service-card invoice-deal-card" onclick="openInvoiceDetail(\'' + d.id + '\')">'
+            + '<div class="invoice-card-head">'
+            +   '<strong class="invoice-card-title">' + escapeHtml(title) + '</strong>'
+            +   rateBtn
+            + '</div>'
+            + '<div class="invoice-card-name">' + escapeHtml(cpName) + '</div>'
+            + (subLine ? '<div class="invoice-card-sub">' + escapeHtml(subLine) + '</div>' : '')
+            + '<div class="invoice-card-footer">'
+            +   '<span class="invoice-card-amount"><span class="kelo-icon-inline">' + keloCardIcon('price') + '</span>' + escapeHtml(total ? formatMoney(total) : '—') + '</span>'
+            +   '<span class="invoice-card-date"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(dateLabel) + '</span>'
+            + '</div>'
+            + '</div>';
+    }).join('') : keloEmptyStateHtml('هنوز فاکتوری ندارید', 'پس از اتمام کار، فاکتورهای شما در این بخش نمایش داده می‌شود.');
 
     const invoiceHeader = '<div class="mobile-account-head inner">'
-        +'<button type="button" class="mobile-account-back" onclick="openMobileAccountSection(\'profile\')" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button>'
-        +'<h2 class="mobile-account-title">فاکتور</h2><span></span></div>';
+        + '<button type="button" class="mobile-account-back" onclick="openMobileAccountSection(\'profile\')" aria-label="بازگشت">' + KELO_BACK_CHEVRON_SVG + '</button>'
+        + '<h2 class="mobile-account-title">فاکتور</h2><span></span></div>';
 
-    const summary='<div class="invoice-summary-card">'
-        +'<div class="invoice-summary-head"><strong>خلاصه مالی</strong></div>'
-        +'<div class="invoice-summary-stats">'
-        +'<div><span>مجموع کار</span><strong>'+toPersianDigits(totalWorkCount)+'</strong></div>'
-        +'<div><span>مبلغ پرداخت شده</span><strong>'+formatMoney(paidByMe)+'</strong></div>'
-        +'<div><span>مبلغ دریافت شده</span><strong>'+formatMoney(receivedByMe)+'</strong></div>'
-        +'</div></div>';
-    return invoiceHeader+'<div class="mobile-account-body"><h3 class="mobile-account-section-label">صورت‌حساب‌های من</h3>'+cards+'</div>';
+    const summary = '<div class="invoice-summary-card">'
+        + '<div class="invoice-summary-head"><strong>خلاصه مالی</strong></div>'
+        + '<div class="invoice-summary-stats">'
+        + '<div><span>' + toPersianDigits(totalWorkCount) + '</span><strong>مجموع کار</strong></div>'
+        + '<div><span>' + (paidByMe ? formatMoneyShort(paidByMe) : toPersianDigits(0)) + '</span><strong>پرداختی من</strong></div>'
+        + '<div><span>' + (receivedByMe ? formatMoneyShort(receivedByMe) : toPersianDigits(0)) + '</span><strong>دریافتی من</strong></div>'
+        + '</div></div>';
+
+    return invoiceHeader + '<div class="mobile-account-body">' + summary + '<h3 class="mobile-account-section-label">صورت‌حساب‌های من</h3>' + cards + '</div>';
 }
 
 function mobileAccountEditMarkup(){
@@ -823,12 +862,19 @@ function activateProfileMapPickerForFirst(){
 }
 
 function renderApp(){
+    if(currentUser && !currentUser.profileCompleted && !isAdmin(currentUser)){
+        showCompleteProfile();
+        return;
+    }
     document.getElementById("avatar").innerText=(currentUser.name && currentUser.name.trim())?currentUser.name:"کاربر";
     updateMobileAccountIdentity();
     if(isAdmin(currentUser)) renderAdmin(); else renderUser();
 }
 function openAccountFromHeader(){ if(!currentUser || isAdmin(currentUser)) return; return openMobileAccountSheet(); }
-function renderUser(){ setMobileTab(window.__keloMobileTab||'home'); }
+function renderUser(){
+    if(currentUser && !currentUser.profileCompleted){ showCompleteProfile(); return; }
+    setMobileTab(window.__keloMobileTab||'home');
+}
 function updateMobileHeader(title){
     const t=document.getElementById('mobileAppTitle'); if(t)t.textContent=title||'خانه';
     const nav=document.getElementById('mobileBottomNav');
@@ -1124,16 +1170,41 @@ function renderMobileServicePicker(){
     sheet.innerHTML = headerHtml + bodyHtml + footerHtml;
 }
 function toggleServicePickerCard(serviceKey){
-    if(wizard.servicePickerExpanded === serviceKey){ wizard.servicePickerExpanded = null; }
-    else { wizard.servicePickerExpanded = serviceKey; if(wizard.servicePickerTemp){ wizard.servicePickerTemp.service = serviceKey; const subs = SERVICE_L3_FIELDS[serviceKey] || []; subs.forEach(function(sf){ if(wizard.servicePickerTemp.options[sf.id] === undefined){ wizard.servicePickerTemp.options[sf.id] = sf.multi ? [] : ''; } }); } }
+    const body = document.querySelector('#keloServicePickerBackdrop .mobile-sheet-body');
+    const scrollTop = body ? body.scrollTop : 0;
+    if(wizard.servicePickerExpanded === serviceKey){
+        wizard.servicePickerExpanded = null;
+    } else {
+        const prevService = wizard.servicePickerTemp ? wizard.servicePickerTemp.service : null;
+        wizard.servicePickerExpanded = serviceKey;
+        if(wizard.servicePickerTemp){
+            // با عوض شدن خدمت، انتخاب چیپ‌های خدمت قبلی پاک شود
+            if(prevService && prevService !== serviceKey){
+                wizard.servicePickerTemp.options = {};
+            }
+            wizard.servicePickerTemp.service = serviceKey;
+            const subs = SERVICE_L3_FIELDS[serviceKey] || [];
+            subs.forEach(function(sf){
+                if(wizard.servicePickerTemp.options[sf.id] === undefined){
+                    wizard.servicePickerTemp.options[sf.id] = sf.multi ? [] : '';
+                }
+            });
+        }
+    }
     renderMobileServicePicker();
+    const body2 = document.querySelector('#keloServicePickerBackdrop .mobile-sheet-body');
+    if(body2) body2.scrollTop = scrollTop;
 }
 function toggleServicePickerChip(fieldId, value, multi){
     const temp = wizard.servicePickerTemp;
     if(!temp) return;
+    const body = document.querySelector('#keloServicePickerBackdrop .mobile-sheet-body');
+    const scrollTop = body ? body.scrollTop : 0;
     if(multi){ let arr = Array.isArray(temp.options[fieldId]) ? temp.options[fieldId].slice() : []; const idx = arr.indexOf(value); if(idx >= 0) arr.splice(idx, 1); else arr.push(value); temp.options[fieldId] = arr; }
     else { temp.options[fieldId] = (temp.options[fieldId] === value) ? '' : value; }
     renderMobileServicePicker();
+    const body2 = document.querySelector('#keloServicePickerBackdrop .mobile-sheet-body');
+    if(body2) body2.scrollTop = scrollTop;
 }
 function confirmMobileServicePicker(){
     const temp = wizard.servicePickerTemp;
@@ -1141,7 +1212,12 @@ function confirmMobileServicePicker(){
     const subs = SERVICE_L3_FIELDS[temp.service] || [];
     for(let i=0;i<subs.length;i++){ const sf = subs[i]; if(!sf.required) continue; const v = temp.options[sf.id]; const empty = sf.multi ? (!Array.isArray(v) || !v.length) : !v; if(empty){ showToast('لطفاً یکی از گزینه‌ها را انتخاب کنید', 'error'); return; } }
     wizard.service = temp.service;
-    wizard.serviceOptions = JSON.parse(JSON.stringify(temp.options));
+    // فقط گزینه‌های همان خدمت انتخاب‌شده
+    const keep = {};
+    (SERVICE_L3_FIELDS[temp.service] || []).forEach(function(sf){
+        if(temp.options[sf.id] !== undefined) keep[sf.id] = temp.options[sf.id];
+    });
+    wizard.serviceOptions = JSON.parse(JSON.stringify(keep));
     closeMobileServicePicker();
     renderMobileFormSheet();
 }
@@ -1255,10 +1331,25 @@ function renderMobileSuccessScreen(){
         : '<button type="button" class="btn btn-brand" onclick="setMobileTab(\'proposals\')">مشاهده سفارش‌ها</button>';
     sb.innerHTML = '<div class="mobile-success-state"><div class="success-icon">✓</div><h2>' + title + '</h2><p>' + desc + '</p>' + primaryBtn + '<button type="button" class="btn btn-brand-outline" onclick="onMobilePlusClick()">ثبت درخواست جدید</button></div>';
 }
-function nearestCityFromCoords(lat, lng){
+function nearestCityFromCoords(lat, lng, maxDistKm){
+    if(lat == null || lng == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return '';
+    const limit = (maxDistKm == null || maxDistKm === undefined) ? KELO_CITY_MAX_DIST_KM : maxDistKm;
     let best = null, bestDist = Infinity;
-    for(const [name, coords] of Object.entries(KELO_CITY_COORDS)){ const d = geoDistanceKm([lat, lng], coords); if(d < bestDist){ bestDist = d; best = name; } }
-    return best || '';
+    for(const [name, coords] of Object.entries(KELO_CITY_COORDS)){
+        const d = geoDistanceKm([Number(lat), Number(lng)], coords);
+        if(d < bestDist){ bestDist = d; best = name; }
+    }
+    if(!best) return '';
+    if(limit > 0 && bestDist > limit) return '';
+    return best;
+}
+function locationLabelFromCoords(lat, lng){
+    const city = nearestCityFromCoords(lat, lng);
+    if(city){
+        const province = provinceFromCity(city);
+        return province ? (city + '، ' + province) : city;
+    }
+    return 'موقعیت روی نقشه';
 }
 function provinceFromCity(city){
     if(!city) return '';
@@ -1267,8 +1358,18 @@ function provinceFromCity(city){
 }
 function requestCityName(r){
     const loc = r?.data?.serviceLocation;
-    if(loc && typeof loc.lat === 'number' && typeof loc.lng === 'number'){ const city = nearestCityFromCoords(loc.lat, loc.lng); if(city) return city; }
-    if(r?.data?.activityArea && Array.isArray(r.data.activityArea) && r.data.activityArea.length){ const first = r.data.activityArea[0]; if(first.all || !first.cities?.length) return first.province; return first.cities[0] || first.province; }
+    if(loc){
+        if(typeof loc.label === 'string' && loc.label.trim()) return loc.label.trim();
+        if(typeof loc.city === 'string' && loc.city.trim()) return loc.city.trim();
+        if(typeof loc.lat === 'number' && typeof loc.lng === 'number'){
+            const city = nearestCityFromCoords(loc.lat, loc.lng);
+            if(city) return city;
+            return 'موقعیت روی نقشه';
+        }
+    }
+    if(r?.data?.activityArea && Array.isArray(r.data.activityArea) && r.data.activityArea.length){
+        return formatActivityArea(r.data.activityArea);
+    }
     return r?.data?.city || r?.data?.province || '—';
 }
 function mobileProposalRequests(){
@@ -1477,7 +1578,10 @@ function renderKeloRequestCard(req, options){
     if(isProvide && priceText){
         priceBar = '<div class="offer-card-price">' + escapeHtml(priceText) + '</div>';
     }
-    return '<div class="mobile-activity-card kelo-service-card">'
+    const extraAttrs = options.offerId
+        ? (' data-offer-id="' + escapeHtml(String(options.offerId)) + '"')
+        : (options.dealId ? (' data-deal-id="' + escapeHtml(String(options.dealId)) + '"') : '');
+    return '<div class="mobile-activity-card kelo-service-card"' + extraAttrs + '>'
         + '<div class="kelo-card-head"><span class="kelo-card-head-icon">' + serviceCardIconSvg(service) + '</span><div style="flex:1;min-width:0"><strong style="display:block">' + escapeHtml(serviceName(service)) + '</strong>' + subTitleHtml + '</div></div>'
         + '<div class="kelo-card-info-list">' + locDateLine + '</div>'
         + priceBar
@@ -1494,7 +1598,7 @@ function renderMobileOffersList(){
             +'<button type="button" class="btn btn-brand" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button>'
             +'<button type="button" class="btn btn-reject" onclick="rejectOffer(\''+o.id+'\')">رد کار</button>'
             +'</div>';
-        return renderKeloRequestCard(req, { actions: actions });
+        return renderKeloRequestCard(req, { actions: actions, offerId: o.id });
     }).join('');
 }
 function isDealForUser(d){ return !!currentUser && (d.userId===currentUser.id || d.providerId===currentUser.id); }
@@ -1585,6 +1689,16 @@ function payCash(dealId){
     const d=db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
     if(!d) return;
     if(!confirm('آیا مبلغ را به صورت نقدی پرداخت کردید؟')) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        window.KeloBackend.payDeal(dealId).then(function(res){
+            applyServerSnapshot(res);
+            showToast('پرداخت نقدی ثبت شد','success');
+            renderMobileProposals();
+        }).catch(function(err){
+            showToast((err&&err.body&&err.body.error)||'ثبت پرداخت انجام نشد.','error');
+        });
+        return;
+    }
     d.paymentStatus='paid';
     d.paymentMethod='cash';
     saveDB();
@@ -1595,6 +1709,82 @@ function payOnline(dealId){
     closePaymentOptions();
     showToast('پرداخت آنلاین به‌زودی متصل می‌شود.','info');
 }
+function openDealProblemReport(dealId){
+    const d = db.deals.find(function(x){ return String(x.id) === String(dealId); });
+    if(!d) return;
+    const isFarmer = String(d.userId) === String(currentUser.id);
+    const isProvider = String(d.providerId) === String(currentUser.id);
+    if(!isFarmer && !isProvider) return;
+    if(d.status === 'cancelled') return;
+    const el = document.getElementById('keloDealProblem'); if(el) el.remove();
+    const farmerReasons = [
+        { id: 'no_show', label: 'ارائه‌دهنده در زمان توافق حاضر نشد' },
+        { id: 'late', label: 'تأخیر زیاد در شروع یا اتمام کار' },
+        { id: 'poor_quality', label: 'کیفیت کار با توافق مطابقت نداشت' },
+        { id: 'extra_charge', label: 'درخواست مبلغ بیشتر از توافق' },
+        { id: 'damage', label: 'آسیب به محصول، زمین یا تجهیزات' },
+        { id: 'behavior', label: 'برخورد نامناسب' },
+        { id: 'other', label: 'سایر موارد' }
+    ];
+    const providerReasons = [
+        { id: 'no_payment', label: 'پرداخت انجام نشده یا ناقص است' },
+        { id: 'not_ready', label: 'زمین یا محل کار آماده نبود' },
+        { id: 'wrong_info', label: 'اطلاعات مساحت، آدرس یا زمان نادرست بود' },
+        { id: 'cancelled_late', label: 'لغو یا تغییر ناگهانی از طرف کشاورز' },
+        { id: 'access', label: 'عدم دسترسی مناسب به محل کار' },
+        { id: 'behavior', label: 'برخورد نامناسب' },
+        { id: 'other', label: 'سایر موارد' }
+    ];
+    const reasons = isFarmer ? farmerReasons : providerReasons;
+    let reasonsHtml = '';
+    reasons.forEach(function(r, idx){
+        reasonsHtml += '<label class="deal-problem-option">'
+            + '<input type="radio" name="keloProblemReason" value="' + r.id + '"' + (idx === 0 ? ' checked' : '') + '>'
+            + '<span>' + escapeHtml(r.label) + '</span></label>';
+    });
+    const backdrop = document.createElement('div');
+    backdrop.id = 'keloDealProblem';
+    backdrop.className = 'mobile-sheet-backdrop';
+    backdrop.style.zIndex = '5200';
+    backdrop.innerHTML = '<div class="mobile-sheet">'
+        + '<button type="button" class="mobile-sheet-handle"></button>'
+        + '<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closeDealProblemReport()">' + KELO_BACK_CHEVRON_SVG + '</button><h2>گزارش مشکل</h2><span></span></div>'
+        + '<div class="mobile-sheet-body">'
+        + '<p class="deal-problem-intro">مشکل پیش‌آمده را انتخاب کنید. تیم پشتیبانی در اسرع وقت بررسی می‌کند.</p>'
+        + '<div class="deal-problem-options">' + reasonsHtml + '</div>'
+        + '<div class="report-question"><div class="report-question-label">توضیح بیشتر (اختیاری)</div>'
+        + '<textarea id="dealProblemNote" class="textarea" rows="3" style="width:100%;box-sizing:border-box;border:1.5px solid #E5E5E5;border-radius:12px;padding:12px;font-family:inherit;font-size:14px" placeholder="در صورت نیاز جزئیات را بنویسید..."></textarea></div>'
+        + '</div>'
+        + '<div class="mobile-sheet-footer"><button type="button" class="btn btn-brand" onclick="submitDealProblemReport(\'' + d.id + '\')">ثبت گزارش</button></div>'
+        + '</div>';
+    document.body.appendChild(backdrop);
+}
+function closeDealProblemReport(){
+    const el = document.getElementById('keloDealProblem'); if(el) el.remove();
+}
+function submitDealProblemReport(dealId){
+    const d = db.deals.find(function(x){ return String(x.id) === String(dealId); });
+    if(!d) return;
+    const picked = document.querySelector('input[name="keloProblemReason"]:checked');
+    if(!picked){ showToast('لطفاً یک مورد را انتخاب کنید','error'); return; }
+    const noteEl = document.getElementById('dealProblemNote');
+    const note = noteEl ? noteEl.value.trim() : '';
+    if(!db.dealProblems) db.dealProblems = [];
+    db.dealProblems.push({
+        id: 'dp' + Date.now(),
+        dealId: dealId,
+        userId: currentUser.id,
+        role: String(d.userId) === String(currentUser.id) ? 'farmer' : 'provider',
+        reason: picked.value,
+        note: note,
+        createdAt: new Date().toISOString()
+    });
+    try { saveDB(); } catch(e){}
+    try { localStorage.setItem('kelo_deal_problems', JSON.stringify(db.dealProblems)); } catch(e){}
+    closeDealProblemReport();
+    showToast('گزارش مشکل ثبت شد','success');
+}
+
 function openDealReport(dealId){
     const d=db.deals.find(x=>x.id===dealId);
     if(!d) return;
@@ -1637,6 +1827,7 @@ function openDealReport(dealId){
     const backdrop=document.createElement('div');
     backdrop.id='keloDealReport';
     backdrop.className='mobile-sheet-backdrop';
+    backdrop.style.zIndex = '5200';
     backdrop.innerHTML='<div class="mobile-sheet">'
         +'<button type="button" class="mobile-sheet-handle"></button>'
         +'<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closeDealReport()">'+KELO_BACK_CHEVRON_SVG+'</button><h2>'+escapeHtml(reportTitle)+'</h2><span></span></div>'
@@ -1665,6 +1856,22 @@ function submitDealReport(dealId){
     const answeredCount = Object.keys(ratings).length;
     if(answeredCount === 0 && !note.trim()){ showToast('لطفاً حداقل به یک مورد امتیاز بدهید یا نظر بنویسید','error'); return; }
     const d=db.deals.find(x=>x.id===dealId); if(!d) return;
+    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        window.KeloBackend.createReview({dealId:dealId,ratings:ratings,note:note}).then(function(res){
+            applyServerSnapshot(res);
+            closeDealReport();
+            showToast('گزارش شما ثبت شد','success');
+            if(typeof renderMobileProposals === 'function') renderMobileProposals();
+            if(window.__keloInvoiceDetailDealId && String(window.__keloInvoiceDetailDealId) === String(dealId)){
+                openInvoiceDetail(dealId);
+            } else if(document.getElementById('mobileAccountSheet') && document.querySelector('#mobileAccountSheet .invoice-deal-card, #mobileAccountSheet .invoice-summary-card')){
+                renderMobileAccountSection('invoice');
+            }
+        }).catch(function(err){
+            showToast((err&&err.body&&err.body.error)||'ثبت گزارش انجام نشد.','error');
+        });
+        return;
+    }
     const isFarmer=String(d.userId)===String(currentUser.id);
     const targetId=isFarmer?d.providerId:d.userId;
     if(!db.reviews) db.reviews=[];
@@ -1674,6 +1881,11 @@ function submitDealReport(dealId){
     closeDealReport();
     showToast('گزارش شما ثبت شد','success');
     if(typeof renderMobileProposals === 'function') renderMobileProposals();
+    if(window.__keloInvoiceDetailDealId && String(window.__keloInvoiceDetailDealId) === String(dealId)){
+        openInvoiceDetail(dealId);
+    } else if(document.getElementById('mobileAccountSheet') && document.querySelector('#mobileAccountSheet .invoice-deal-card, #mobileAccountSheet .invoice-summary-card')){
+        renderMobileAccountSection('invoice');
+    }
 }
 function getUserRating(userId){
     const reviews = (db.reviews || []).filter(function(r){ return String(r.targetId) === String(userId); });
@@ -1718,32 +1930,55 @@ function renderMobileDealsList(){
         const price=(d.total != null && d.total !== undefined) ? formatMoney(d.total) : '—';
         const subLine = isFarmer ? machine : (area ? (toPersianDigits(area) + ' هکتار') : '');
         const _chip = computeDealChip(d);
-        const showReport = !hasUserReviewedDeal(d.id);
+        const isPaid = (d.paymentStatus === 'paid');
+        const isCompleted = (d.status === 'completed');
         let action = '';
         if (d.status === 'cancelled') {
             action = '';
-        } else if (d.status === 'completed') {
-            action = '<div class="offer-card-price" style="text-align:center">✓ کار تمام شده</div>'
-                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+        } else if (isCompleted && isPaid) {
+            action = '';
         } else if (isFarmer) {
-            action = '<div class="offer-actions-row">'
-                + '<button type="button" class="btn btn-brand" onclick="openPaymentOptions(\'' + d.id + '\')">' + (d.paymentStatus==='paid'?'پرداخت شده':'پرداخت') + '</button>'
-                + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
-                + '</div>'
-                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+            if (isPaid) {
+                // Paid but not completed yet — farmer has no actions; chip shows پرداخت شده
+                action = '';
+            } else {
+                // Unpaid: always can pay; cancel only if work not completed yet
+                const payBtn = '<button type="button" class="btn btn-brand" onclick="openPaymentOptions(\'' + d.id + '\')">پرداخت</button>';
+                if (isCompleted) {
+                    action = '<div class="offer-actions-row single">' + payBtn + '</div>';
+                } else {
+                    action = '<div class="offer-actions-row">'
+                        + payBtn
+                        + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                        + '</div>';
+                }
+            }
         } else {
-            action = '<div class="offer-actions-row">'
-                + '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>'
-                + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
-                + '</div>'
-                + (showReport ? '<button type="button" class="btn btn-report" onclick="openDealReport(\'' + d.id + '\')">گزارش عملکرد</button>' : '');
+            // Provider
+            if (isCompleted) {
+                // Completed but unpaid — provider has no actions; chip shows در انتظار پرداخت
+                action = '';
+            } else {
+                const completeBtn = '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>';
+                if (isPaid) {
+                    action = '<div class="offer-actions-row single">' + completeBtn + '</div>';
+                } else {
+                    action = '<div class="offer-actions-row">'
+                        + completeBtn
+                        + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                        + '</div>';
+                }
+            }
         }
         const locDateLine = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:4px 0;flex-wrap:wrap">'
             + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(city) + '</span>'
             + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
             + '</div>';
         const priceLine = '<div class="offer-card-price">' + escapeHtml('قیمت کل: ' + price) + '</div>';
-        return '<div class="mobile-activity-card kelo-service-card">'
+        const problemLink = (d.status === 'cancelled')
+            ? ''
+            : '<div class="deal-problem-link-wrap"><span class="deal-problem-link" role="button" tabindex="0" onclick="event.stopPropagation();openDealProblemReport(\'' + d.id + '\')"><span class="deal-problem-icon" aria-hidden="true">!</span>گزارش مشکل</span></div>';
+        return '<div class="mobile-activity-card kelo-service-card" data-deal-id="'+escapeHtml(String(d.id))+'">'
             +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(serviceName(service))+'</strong>'
             +  '<span class="kelo-card-status '+_chip.cls+'">'+_chip.label+'</span></div>'
             +'<div class="kelo-card-info-list">'
@@ -1752,6 +1987,7 @@ function renderMobileDealsList(){
             +'</div>'
             +priceLine
             +action
+            +problemLink
             +'</div>';
     }).join('');
 }
@@ -1815,51 +2051,99 @@ function collectScheduledItems(){
     const rows = [];
     db.deals.forEach(d => {
         if(d.userId !== currentUser.id && d.providerId !== currentUser.id) return;
+        if(d.status === 'cancelled' || d.status === 'completed') return;
         const req = db.requests.find(r => r.id === d.requestId);
-        if(!req) return;
-        const start = req.data?.dateStart || req.data?.date;
-        const end = req.data?.dateEnd || start;
-        if(!start) return;
-        const startDate = parseStoredDate(start);
-        const endDate = parseStoredDate(end) || startDate;
+        // تاریخ از deal یا request (نیاز کشاورز)
+        let startIso = (req && req.data && (req.data.dateStart || req.data.date)) || d.dateStart || null;
+        let endIso = (req && req.data && req.data.dateEnd) || d.dateEnd || startIso;
+        if(!startIso && d.requestData){
+            startIso = d.requestData.dateStart || d.requestData.date || null;
+            endIso = d.requestData.dateEnd || startIso;
+        }
+        if(!startIso) return;
+        const startDate = parseStoredDate(startIso);
+        const endDate = parseStoredDate(endIso) || startDate;
         if(!startDate) return;
-        const role = d.userId === currentUser.id ? 'کشاورز' : 'ارائه‌دهنده';
-        const counterparty = d.userId === currentUser.id ? (d.counterparty || 'ارائه‌دهنده') : (req.requesterName || 'کشاورز');
-        rows.push({ dealId: d.id, requestId: req.id, service: d.service, start: startDate, end: endDate, role, counterparty, total: d.total || 0 });
+        const role = String(d.userId) === String(currentUser.id) ? 'کشاورز' : 'ارائه‌دهنده';
+        const counterparty = String(d.userId) === String(currentUser.id)
+            ? (d.providerName || d.counterparty || 'ارائه‌دهنده')
+            : (d.requesterName || (req && req.requesterName) || 'کشاورز');
+        const city = req ? requestCityName(req) : (d.location || '');
+        const title = dealInvoiceServiceTitle(d, req);
+        rows.push({
+            dealId: d.id,
+            requestId: req ? req.id : d.requestId,
+            service: d.service || (req && req.service),
+            title: title,
+            city: city || '',
+            startIso: startIso,
+            endIso: endIso,
+            start: startDate,
+            end: endDate,
+            role: role,
+            counterparty: counterparty,
+            total: d.total || 0
+        });
     });
-    rows.sort((a,b) => a.start - b.start);
+    rows.sort(function(a,b){ return a.start - b.start; });
     return rows;
 }
 function daysBetween(a, b){ const ms = 86400000; return Math.round((b - a) / ms) + 1; }
 function renderScheduleContent(){
     const items = collectScheduledItems();
     const today = new Date(); today.setHours(0,0,0,0);
-    const upcoming = items.filter(it => it.end >= today);
+    const upcoming = items.filter(function(it){ return it.end >= today; });
     if(!upcoming.length){
         return '<div class="schedule-empty"><div class="schedule-empty-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><h3 class="schedule-empty-title">کاری در پیش نیست</h3><p class="schedule-empty-desc">از این به بعد کاری در تقویم شما ثبت نشده است.</p></div>';
     }
-    return upcoming.map(it => {
+    return upcoming.map(function(it){
         const p = getJalaliParts(it.start);
-        const endP = getJalaliParts(it.end);
-        const days = daysBetween(it.start, it.end);
-        const dayLabel = days > 1 ? (days + ' روز') : 'یک روزه';
-        const rangeLabel = days > 1
-            ? (toPersianDigits(p.day) + ' ' + JALALI_MONTH_NAMES[p.month-1] + ' تا ' + toPersianDigits(endP.day) + ' ' + JALALI_MONTH_NAMES[endP.month-1])
-            : '';
-        const meta = escapeHtml(requestDate({ data: { dateStart: localDateToIso(it.start), dateEnd: localDateToIso(it.end) } })) + ' · ' + escapeHtml(it.counterparty);
+        const dateLabel = formatDealRangeDate(it.startIso, it.endIso);
         const tomorrow = new Date(); tomorrow.setHours(0,0,0,0); tomorrow.setDate(tomorrow.getDate() + 1);
         const isTomorrow = it.start.getTime() === tomorrow.getTime() || (it.start <= tomorrow && it.end >= tomorrow);
-        return '<div class="schedule-card">'
-            + '<div class="schedule-card-date"><strong>'+toPersianDigits(p.day)+'</strong><span>'+JALALI_MONTH_NAMES[p.month-1]+'</span></div>'
+        const locLine = it.city
+            ? '<div class="schedule-card-line"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(it.city) + '</div>'
+            : '';
+        const dateLine = '<div class="schedule-card-line"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(dateLabel) + '</div>';
+        return '<div class="schedule-card" role="button" tabindex="0" onclick="openDealFromSchedule(\'' + it.dealId + '\')">'
+            + '<div class="schedule-card-date"><strong>' + toPersianDigits(p.day) + '</strong><span>' + JALALI_MONTH_NAMES[p.month-1] + '</span></div>'
             + '<div class="schedule-card-main">'
-            +   '<strong>'+escapeHtml(serviceName(it.service))+'</strong>'
-            +   '<small>'+meta+'</small>'
-            +   (rangeLabel ? '<small style="margin-top:4px">'+escapeHtml(rangeLabel)+' ('+dayLabel+')</small>' : '')
+            +   '<strong>' + escapeHtml(it.title || serviceName(it.service)) + '</strong>'
+            +   locLine
+            +   dateLine
             +   (isTomorrow ? '<span class="schedule-card-role" style="background:#FBEDD3;color:#B06F0F">⏰ یادآوری: فردا</span>' : '')
-            +   '<span class="schedule-card-role">'+escapeHtml(it.role)+'</span>'
             + '</div>'
             + '</div>';
     }).join('');
+}
+
+function openDealFromSchedule(dealId){
+    if(!currentUser || !dealId) return;
+    closeMobileAccountSheet();
+    setMobileOrdersSubTab('deals');
+    setMobileTab('proposals');
+    setTimeout(function(){
+        var card = document.querySelector('.mobile-orders-body [data-deal-id="' + dealId + '"], [data-deal-id="' + dealId + '"]');
+        if(card){
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('kelo-card-highlight');
+            setTimeout(function(){ card.classList.remove('kelo-card-highlight'); }, 1800);
+        }
+    }, 280);
+}
+function openNotificationOffer(recipientId){
+    if(!currentUser || !recipientId) return;
+    closeMobileAccountSheet();
+    setMobileOrdersSubTab('offers');
+    setMobileTab('proposals');
+    setTimeout(function(){
+        var card = document.querySelector('[data-offer-id="' + recipientId + '"]');
+        if(card){
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('kelo-card-highlight');
+            setTimeout(function(){ card.classList.remove('kelo-card-highlight'); }, 1800);
+        }
+    }, 280);
 }
 function openMobileSchedule(){
     if(!currentUser || isAdmin(currentUser)) return;
@@ -1942,9 +2226,20 @@ async function openRequestOffersMap(requestId){
             return;
         }
     }
-    const currentRecipients = db.requestRecipients.filter(x=>x.requestId===req.id);
-    const recipientByProvider = {};
     const _myId = String(currentUser.id);
+    // For a provider's own 'provide' ad, proposals are stored against the
+    // farmer's 'need' request (not the ad), so match those by counterparty too.
+    const currentRecipients = db.requestRecipients.filter(function(x){
+        if(x.requestId===req.id) return true;
+        if(!_isProvideReq) return false;
+        const _px = String(x.proposerId || x.proposer_id || '');
+        const _rx = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
+        if(_px !== _myId && _rx !== _myId) return false;
+        const _rq = db.requests.find(function(q){ return q.id === x.requestId; });
+        if(_rq && _rq.requestKind === 'provide') return false;
+        return (_rq ? _rq.service : x.service) === req.service;
+    });
+    const recipientByProvider = {};
     currentRecipients.forEach(function(x){
         const _p = String(x.proposerId || x.proposer_id || '');
         const _r = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
@@ -1965,7 +2260,7 @@ async function openRequestOffersMap(requestId){
         if(rec && rec.status==='pending'){
             action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
         }else if(rec && rec.status==='rejected'){
-            action='<button class="btn offer-item-btn offer-item-btn-rejected" disabled>\u0631\u062f \u0634\u062f\u0647</button>';
+            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
         }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
             action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
         }else{
@@ -2143,9 +2438,22 @@ function focusOfferOnMap(offerId){
     if(item) item.classList.add('active');
 }
 function openMobileNotifications(){
-    const pending=db.requestRecipients.filter(o=>o.providerId===currentUser.id && o.status==='pending');
-    const list=pending.length?pending.map(o=>'<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-main"><strong>'+escapeHtml(o.provider||'پیشنهاد جدید')+'</strong><span class="activity-meta">'+escapeHtml(serviceName(o.service))+' · '+escapeHtml(o.location||'')+'</span></div><button class="btn btn-primary" style="min-height:40px;padding:6px 12px;font-size:13px" onclick="acceptOffer(\''+o.id+'\')">دیدن</button></div></div>').join(''):'<div class="mobile-empty-state">اعلان جدیدی ندارید.</div>';
-    const backdrop=document.getElementById('mobileAccountBackdrop');
+    const pending = (typeof getMyReceivedOffers === 'function')
+        ? getMyReceivedOffers()
+        : db.requestRecipients.filter(function(o){ return String(o.providerId) === String(currentUser.id) && o.status === 'pending'; });
+    const list = pending.length ? pending.map(function(o){
+        const req = db.requests.find(function(r){ return r.id === o.requestId; });
+        const serviceTitle = req
+            ? (typeof dealInvoiceServiceTitle === 'function' ? dealInvoiceServiceTitle({ service: req.service }, req) : serviceName(req.service))
+            : serviceName(o.service);
+        return '<div class="mobile-activity-card notif-offer-card" role="button" tabindex="0" onclick="openNotificationOffer(\'' + o.id + '\')">'
+            + '<div class="activity-row">'
+            + '<div class="mobile-activity-main">'
+            + '<strong>پیشنهاد جدید</strong>'
+            + '<span class="activity-meta">برای «' + escapeHtml(serviceTitle) + '» شما یک پیشنهاد دریافت کرده‌اید.</span>'
+            + '</div></div></div>';
+    }).join('') : '<div class="mobile-empty-state">اعلان جدیدی ندارید.</div>';
+const backdrop=document.getElementById('mobileAccountBackdrop');
     const sheet=document.getElementById('mobileAccountSheet');
     if(!backdrop||!sheet)return;
     if(!backdrop._keloBackdropBound){
@@ -2294,7 +2602,7 @@ function initializeInlineLocationMap(){
     const center=loc&&typeof loc.lat==='number' ? [loc.lat,loc.lng] : [36.5659,53.0586];
     const zoom=loc&&typeof loc.lat==='number' ? 14 : 9;
     const map=createKeloMap(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,touchZoom:false},center,zoom);
-    if(loc&&typeof loc.lat==='number'){ L.marker([loc.lat,loc.lng]).addTo(map); var _cc=nearestCityFromCoords(loc.lat,loc.lng); var _pv=provinceFromCity(_cc); var _ch=document.getElementById('inlineMapCityChip'); if(_ch&&_cc){ _ch.textContent=_cc+(_pv?', '+_pv:''); _ch.style.display='inline-flex'; } }
+    if(loc&&typeof loc.lat==='number'){ L.marker([loc.lat,loc.lng]).addTo(map); var _ch=document.getElementById('inlineMapCityChip'); if(_ch){ _ch.textContent=locationLabelFromCoords(loc.lat,loc.lng); _ch.style.display='inline-flex'; } }
     window._keloInlineMap=map;
     setTimeout(()=>map.invalidateSize(),50);
 }
@@ -2400,10 +2708,9 @@ function clearKeloPickerGpsVisuals(){
 function updateKeloPickerCityChip(lat,lng){
     const chip=document.getElementById('keloMapCityChip');
     if(!chip) return;
-    const city=nearestCityFromCoords(Number(lat),Number(lng));
-    const province=provinceFromCity(city);
-    if(city && province){ chip.textContent=city+'، '+province; chip.style.display='inline-flex'; }
-    else { chip.textContent=''; chip.style.display='none'; }
+    const label = locationLabelFromCoords(Number(lat), Number(lng));
+    chip.textContent = label;
+    chip.style.display = 'inline-flex';
 }
 function useMyLocationForPicker(){
     if(!window._keloMobilePickerMap || !navigator.geolocation){
@@ -2521,7 +2828,14 @@ function confirmMobileLocationPicker(){
             }
             return;
         } else {
-            wizard.data.serviceLocation = Object.assign({}, wizard._pendingMapPoint, {source:'map'});
+            var _pt = wizard._pendingMapPoint;
+            var _city = nearestCityFromCoords(_pt.lat, _pt.lng);
+            wizard.data.serviceLocation = Object.assign({}, _pt, {
+                source: 'map',
+                city: _city || null,
+                province: _city ? provinceFromCity(_city) : null,
+                label: locationLabelFromCoords(_pt.lat, _pt.lng)
+            });
         }
     }
     wizard.mapPickMode = false;
@@ -2594,8 +2908,27 @@ function ensureKeloMapView(map, center, zoom){
 }
 
 let keloMap=null,keloUserMarker=null,keloAccuracy=null,keloPickMarker=null,keloLocationWatch=null;
-const KELO_CITY_COORDS={'ساری':[36.5659,53.0586],'جویبار':[36.6412,52.9120],'بابل':[36.5513,52.6789],'آمل':[36.4696,52.3507],'قائم‌شهر':[36.4630,52.8610],'قائمشهر':[36.4630,52.8610],'بابلسر':[36.7025,52.6576],'بهشهر':[36.6926,53.5526],'نوشهر':[36.6489,51.4960],'چالوس':[36.6550,51.4200],'رامسر':[36.9198,50.6446],'رشت':[37.2808,49.5832],'لاهیجان':[37.2070,50.0039],'لنگرود':[37.1964,50.1531],'آستارا':[38.4291,48.8720],'بندر انزلی':[37.4714,49.4597],'انزلی':[37.4714,49.4597],'رودسر':[37.1370,50.2859],'رودبار':[36.8240,49.4222],'آستانه اشرفیه':[37.2595,49.9444],'فریدون‌کنار':[36.6850,52.5210],'فریدونکنار':[36.6850,52.5210]};
-function coordForCity(city){return KELO_CITY_COORDS[city]||[36.5659,53.0586];}
+const KELO_CITY_COORDS={
+    // مازندران
+    'ساری':[36.5659,53.0586],'جویبار':[36.6412,52.9120],'بابل':[36.5513,52.6789],'آمل':[36.4696,52.3507],
+    'قائم‌شهر':[36.4630,52.8610],'قائمشهر':[36.4630,52.8610],'بابلسر':[36.7025,52.6576],'بهشهر':[36.6926,53.5526],
+    'تنکابن':[36.8167,50.8708],'نکا':[36.6508,53.2993],'نور':[36.5732,52.0112],'نوشهر':[36.6489,51.4960],
+    'چالوس':[36.6550,51.4200],'رامسر':[36.9198,50.6446],'محمودآباد':[36.6312,52.2630],'فریدون‌کنار':[36.6850,52.5210],'فریدونکنار':[36.6850,52.5210],
+    'عباس‌آباد':[36.7270,51.1060],'عباس آباد':[36.7270,51.1060],'کلاردشت':[36.5050,51.1600],'گلوگاه':[36.7270,53.8080],
+    'میاندورود':[36.5900,53.2000],'سیمرغ':[36.5800,52.8200],'سوادکوه':[36.0500,52.9500],'سوادکوه شمالی':[36.2500,53.0000],
+    // گیلان
+    'رشت':[37.2808,49.5832],'لاهیجان':[37.2070,50.0039],'لنگرود':[37.1964,50.1531],'آستارا':[38.4291,48.8720],
+    'بندر انزلی':[37.4714,49.4597],'انزلی':[37.4714,49.4597],'رودسر':[37.1370,50.2859],'رودبار':[36.8240,49.4222],
+    'آستانه اشرفیه':[37.2595,49.9444],'فومن':[37.2239,49.3122],'صومعه‌سرا':[37.2950,49.3200],'صومعه سرا':[37.2950,49.3200],
+    'شفت':[37.1700,49.4000],'سیاهکل':[37.1520,49.8710],'املش':[37.0960,50.1860],'رضوانشهر':[37.5510,49.1390],
+    'ماسال':[37.3620,49.1320],'طوالش':[37.9000,48.9000],'هشتپر':[37.9000,48.9000]
+};
+// سقف فاصله (کیلومتر) برای قبول برچسب شهر — جلو اشتباه تنکابن→رامسر و مشابه
+const KELO_CITY_MAX_DIST_KM = 12;
+function coordForCity(city){
+    if(city && KELO_CITY_COORDS[city]) return KELO_CITY_COORDS[city];
+    return null;
+}
 function geoDistanceKm(a,b){ if(!a||!b)return Infinity; const toRad=x=>x*Math.PI/180, R=6371; const dLat=toRad(b[0]-a[0]), dLng=toRad(b[1]-a[1]); const s=Math.sin(dLat/2)**2+Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(s)); }
 function requestMatchesActivityArea(request,area){ if(!Array.isArray(area)||!area.length)return false; const reqLoc=request?.data?.serviceLocation; let reqPoint=reqLoc?.lat?[reqLoc.lat,reqLoc.lng]:null; if(!reqPoint && request?.data?.city) reqPoint=coordForCity(request.data.city); if(!reqPoint) return true; return area.some(row=>{ const cities=row.all?(KELO_GEOGRAPHY[row.province]||[]):(row.cities||[]); if(!cities.length) return true; return cities.some(city=>geoDistanceKm(reqPoint,coordForCity(city))<=50); }); }
 function initializeKeloMap(){
@@ -2643,6 +2976,173 @@ function getJalaliMonthLength(year,month){ if(month<=6)return 31; if(month<=11)r
 function shiftJalaliMonth(year,month,delta){ let m=month+delta,y=year; while(m<1){m+=12;y--;} while(m>12){m-=12;y++;} return {year:y,month:m}; }
 function jalaliIsoFromParts(y,m,d){ const dt=jalaliToDate(y,m,d); return dt?localDateToIso(dt):''; }
 function humanJalaliDate(value){ const date=parseStoredDate(value); if(!date)return String(value||''); const p=getJalaliParts(date); return toPersianDigits(p.day)+' '+JALALI_MONTH_NAMES[p.month-1]+' '+toPersianDigits(p.year); }
+function formatDealRangeDate(startIso, endIso){
+    if(!startIso && !endIso) return '—';
+    if(!endIso || String(endIso) === String(startIso)) return humanJalaliDate(startIso || endIso);
+    const s = parseStoredDate(startIso);
+    const e = parseStoredDate(endIso);
+    if(!s || !e) return humanJalaliDate(startIso);
+    const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000);
+    const sp = getJalaliParts(s);
+    const ep = getJalaliParts(e);
+    if(diffDays <= 0) return humanJalaliDate(startIso);
+    if(diffDays === 1 && sp.month === ep.month && sp.year === ep.year){
+        return toPersianDigits(sp.day)+' و '+toPersianDigits(ep.day)+' '+JALALI_MONTH_NAMES[sp.month-1]+' '+toPersianDigits(sp.year);
+    }
+    if(sp.month === ep.month && sp.year === ep.year){
+        return toPersianDigits(sp.day)+' تا '+toPersianDigits(ep.day)+' '+JALALI_MONTH_NAMES[sp.month-1]+' '+toPersianDigits(sp.year);
+    }
+    return humanJalaliDate(startIso)+' تا '+humanJalaliDate(endIso);
+}
+function dealInvoiceServiceTitle(deal, req){
+    const service = (req && req.service) || deal.service;
+    const base = serviceName(service);
+    const data = (req && req.data) || deal.requestData || {};
+    let sub = '';
+    if(Array.isArray(data.crop) && data.crop.length) sub = data.crop[0];
+    else if(typeof data.crop === 'string' && data.crop) sub = data.crop;
+    else if(Array.isArray(data.landType) && data.landType.length) sub = data.landType[0];
+    else if(typeof data.landType === 'string' && data.landType) sub = data.landType;
+    return sub ? (base + ' ' + sub) : base;
+}
+
+function dealInvoiceNumber(deal){
+    var s = String(deal && deal.id || '');
+    var n = 0;
+    for(var i=0;i<s.length;i++) n = ((n * 31) + s.charCodeAt(i)) >>> 0;
+    return 1000 + (n % 9000);
+}
+function getMyReviewAverageForDeal(dealId){
+    if(!currentUser) return null;
+    var rev = (db.reviews || []).find(function(r){
+        return String(r.dealId) === String(dealId) && String(r.userId) === String(currentUser.id);
+    });
+    if(!rev || !rev.ratings) return null;
+    var vals = Object.keys(rev.ratings).map(function(k){ return Number(rev.ratings[k]) || 0; }).filter(function(n){ return n > 0; });
+    if(!vals.length) return null;
+    return vals.reduce(function(a,b){ return a + b; }, 0) / vals.length;
+}
+function dealPartyNames(deal){
+    var providerName = deal.providerName || '';
+    var requesterName = deal.requesterName || '';
+    if(!providerName){
+        var pu = (db.users || []).find(function(x){ return String(x.id) === String(deal.providerId); });
+        providerName = pu ? (pu.name || '—') : '—';
+    }
+    if(!requesterName){
+        var ru = (db.users || []).find(function(x){ return String(x.id) === String(deal.userId); });
+        requesterName = ru ? (ru.name || '—') : '—';
+    }
+    return { providerName: providerName || '—', requesterName: requesterName || '—' };
+}
+function keloCommissionAmount(total){
+    var t = Number(total) || 0;
+    return Math.round(t * 0.05);
+}
+function openInvoiceDetail(dealId){
+    if(!currentUser) return;
+    var d = (db.deals || []).find(function(x){ return String(x.id) === String(dealId) && isDealForUser(x); });
+    if(!d || d.status !== 'completed'){ showToast('فاکتور پیدا نشد','error'); return; }
+    window.__keloInvoiceDetailDealId = String(dealId);
+    var req = (db.requests || []).find(function(r){ return r.id === d.requestId; });
+    var parties = dealPartyNames(d);
+    var service = serviceName((req && req.service) || d.service);
+    var city = (function(){
+        if(req){
+            var n = requestCityName(req);
+            if(n && n !== '—') return n;
+        }
+        // برچسب متنی سرور
+        if(typeof d.location === 'string' && d.location.trim()) return d.location;
+        if(typeof d.requestLocation === 'string' && d.requestLocation.trim()) return d.requestLocation;
+        // آبجکت مختصات → نزدیک‌ترین شهر (نه [object Object])
+        var loc = d.requestLocation;
+        if(loc && typeof loc === 'object'){
+            if(typeof loc.label === 'string' && loc.label) return loc.label;
+            if(typeof loc.lat === 'number' && typeof loc.lng === 'number'){
+                var cityFromCoords = nearestCityFromCoords(loc.lat, loc.lng);
+                if(cityFromCoords) return cityFromCoords;
+            }
+        }
+        if(d.requestData){
+            if(d.requestData.serviceLocationLabel) return d.requestData.serviceLocationLabel;
+            if(Array.isArray(d.requestData.activityArea) && d.requestData.activityArea.length){
+                return formatActivityArea(d.requestData.activityArea);
+            }
+            var sl = d.requestData.serviceLocation;
+            if(sl && typeof sl.lat === 'number' && typeof sl.lng === 'number'){
+                var c2 = nearestCityFromCoords(sl.lat, sl.lng);
+                if(c2) return c2;
+            }
+        }
+        return '—';
+    })();
+    var startIso = (req && req.data && (req.data.dateStart || req.data.date)) || d.dateStart || null;
+    var endIso = (req && req.data && req.data.dateEnd) || d.dateEnd || null;
+    var workDate = formatDealRangeDate(startIso, endIso);
+    var areaRaw = (req && req.data && (req.data.area || req.data.amount)) ? (req.data.area || req.data.amount) : (d.requestArea || null);
+    var amountLabel = areaRaw ? (toPersianDigits(areaRaw) + ' هکتار') : '—';
+    var total = Number(d.total) || 0;
+    var unitPrice = 0;
+    if(areaRaw && Number(areaRaw) > 0) unitPrice = Math.round(total / Number(areaRaw));
+    else unitPrice = total;
+    var commission = keloCommissionAmount(total);
+    var issueIso = d.completedAt || d.paidAt || d.createdAt || null;
+    var issueDate = issueIso ? humanJalaliDate(issueIso) : '—';
+    var invNo = toPersianDigits(dealInvoiceNumber(d));
+    var payStatus = (d.paymentStatus === 'paid') ? 'پرداخت شده' : 'پرداخت نشده';
+    var payMethod = '—';
+    if(d.paymentStatus === 'paid'){
+        if(d.paymentMethod === 'online') payMethod = 'آنلاین';
+        else payMethod = 'نقدی';
+    }
+    function row(label, value){
+        return '<div class="invoice-detail-row">'
+            + '<span class="invoice-detail-label">' + escapeHtml(label) + '</span>'
+            + '<span class="invoice-detail-value">' + escapeHtml(value == null || value === '' ? '—' : String(value)) + '</span>'
+            + '</div>';
+    }
+
+    var body = '<div class="invoice-detail-sheet">'
+        + '<div class="invoice-detail-block">'
+        + row('شماره فاکتور', invNo)
+        + row('تاریخ صدور', issueDate)
+        + '</div>'
++ '<div class="invoice-detail-divider"></div>'
+        + '<div class="invoice-detail-block">'
+        + row('خدمت', service)
+        + row('ارائه‌دهنده', parties.providerName)
+        + row('دریافت‌کننده', parties.requesterName)
+        + row('محل', city || '—')
+        + row('تاریخ انجام', workDate)
+        + row('مقدار', amountLabel)
+        + row('قیمت واحد', unitPrice ? formatMoney(unitPrice) : '—')
+        + row('کارمزد کلو', formatMoney(commission))
+        + '</div>'
+        + '<div class="invoice-detail-divider"></div>'
+        + '<div class="invoice-detail-block">'
+        + row('مبلغ کل', total ? formatMoney(total) : '—')
+        + row('وضعیت کار', 'انجام شده')
+        + row('وضعیت پرداخت', payStatus)
+        + row('روش پرداخت', payMethod)
+        + '</div>'
+        + '</div>';
+
+    var host = document.getElementById('mobileAccountSheet');
+    if(!host){ showToast('فاکتور در دسترس نیست','error'); return; }
+    var inner = host.querySelector('.mobile-sheet') || host;
+    inner.innerHTML = '<div class="mobile-account-head inner">'
+        + '<button type="button" class="mobile-account-back" onclick="closeInvoiceDetail()" aria-label="بازگشت">' + KELO_BACK_CHEVRON_SVG + '</button>'
+        + '<h2 class="mobile-account-title">جزئیات فاکتور</h2><span></span></div>'
+        + '<div class="mobile-account-body">' + body + '</div>';
+    if(typeof attachSheetDragOnce === 'function') attachSheetDragOnce(inner);
+}
+function closeInvoiceDetail(){
+    window.__keloInvoiceDetailDealId = null;
+    renderMobileAccountSection('invoice');
+}
+
+
 function jalaliSelectedValue(id,multi){ const value=wizard.data[id]; if(multi)return Array.isArray(value)?value:[]; return typeof value==='string'?value:''; }
 function computeCalendarMinIso(id){
     const today = localDateToIso(new Date());
@@ -3105,11 +3605,46 @@ async function cancelRecipient(recipientId, requestId){
         return;
     }
     const rec = db.requestRecipients.find(x=>x.id===recipientId);
-    if(rec){ rec.status='closed'; rec.closedAt=new Date().toISOString(); saveDB(); }
+    if(rec){ rec.status='closed'; rec.closedAt=new Date().toISOString(); rec.respondedAt=new Date().toISOString(); saveDB(); }
     showToast('ارسال لغو شد','success');
     openRequestOffersMap(requestId);
 }
 async function sendRequestToProvider(providerId, requestId){
+    window.__keloSending = window.__keloSending || {};
+    const _sendKey = String(requestId)+':'+String(providerId);
+    if(window.__keloSending[_sendKey]) return;
+    window.__keloSending[_sendKey] = true;
+    try{ return await sendRequestToProviderInner(providerId, requestId); }
+    finally{
+        delete window.__keloSending[_sendKey];
+        // If the send failed (or bailed out early) the sheet was not re-rendered:
+        // put the button back so the user can try again.
+        const _b = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
+        if(_b && _b.dataset && _b.dataset.origText && _b.disabled){ _b.disabled = false; _b.textContent = _b.dataset.origText; }
+    }
+}
+function sendOfferPeerLabel(request){
+    // provide = ماشین‌دار برای کشاورز می‌فرستد؛ need = کشاورز برای ماشین‌دار
+    if(request && request.requestKind === 'provide') return 'کشاورز';
+    return 'ماشین‌دار';
+}
+function sendOfferSuccessToast(request){
+    return 'پیشنهاد برای ' + sendOfferPeerLabel(request) + ' ارسال شد';
+}
+function sendOfferAlreadyToast(request){
+    return 'این پیشنهاد قبلاً برای این ' + sendOfferPeerLabel(request) + ' ارسال شده است';
+}
+function sendOfferUnavailableToast(request){
+    return request && request.requestKind === 'provide'
+        ? 'این کشاورز در حال حاضر برای این تاریخ در دسترس نیست'
+        : 'این ماشین‌دار در حال حاضر برای این تاریخ در دسترس نیست';
+}
+function sendOfferMapHeader(request){
+    return request && request.requestKind === 'provide' ? 'کشاورزان' : 'ارائه‌دهندگان خدمت';
+}
+async function sendRequestToProviderInner(providerId, requestId){
+    const _btn = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
+    if(_btn){ _btn.dataset.origText = _btn.textContent; _btn.disabled = true; _btn.textContent = 'در حال ارسال…'; }
     const request=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
     if(!request){ showToast('درخواست پیدا نشد','error'); return; }
     if(request.status==='accepted' || request.status==='agreed' || request.status==='in_progress' || request.status==='completed'){
@@ -3120,15 +3655,15 @@ async function sendRequestToProvider(providerId, requestId){
         return;
     }
     if(db.requestRecipients.some(x=>x.requestId===requestId && x.providerId===providerId && ['pending','accepted'].includes(x.status))){
-        showToast('این درخواست قبلاً برای این ماشین‌دار ارسال شده است','error'); return;
+        showToast(sendOfferAlreadyToast(request),'error'); return;
     }
 
     const candidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===providerId)||{providerId:providerId,listingId:null,machineId:null,unitPrice:0,priceUnit:"",location:"",rating:null};
-    if(!candidate){ showToast('این ماشین‌دار در حال حاضر برای این تاریخ در دسترس نیست','error'); return; }
+    if(!candidate){ showToast(sendOfferUnavailableToast(request),'error'); return; }
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
             applyServerSnapshot(await window.KeloBackend.sendRecipient(requestId,{providerId:providerId,machineId:null,listingId:candidate.listingId||null,unitPrice:candidate.unitPrice,priceUnit:candidate.priceUnit,location:candidate.location}));
-            showToast('درخواست برای ماشین‌دار ارسال شد','success'); openRequestOffersMap(requestId); updateMobileHeader('ارائه‌دهندگان خدمت');
+            showToast(sendOfferSuccessToast(request),'success'); openRequestOffersMap(requestId); updateMobileHeader(sendOfferMapHeader(request));
         }catch(err){showToast((err&&err.body&&err.body.error)||'ارسال درخواست انجام نشد.','error');}
         return;
     }
@@ -3152,9 +3687,9 @@ async function sendRequestToProvider(providerId, requestId){
     db.requestRecipients.push(recipient);
     request.status='pending';
     saveDB();
-    showToast('درخواست برای ماشین‌دار ارسال شد','success');
+    showToast(sendOfferSuccessToast(request),'success');
     openRequestOffersMap(request.id);
-    updateMobileHeader('ارائه‌دهندگان خدمت');
+    updateMobileHeader(sendOfferMapHeader(request));
 }
 function providerHasUnfinishedDeal(providerId){
     return db.deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
@@ -3276,7 +3811,7 @@ function routeToDeal(dealId){
     openRequestLocationMap(req.id);
 }
 async function cancelDeal(dealId){
-    const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed' && x.status!=='cancelled');
+    const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed' && x.status!=='cancelled' && x.paymentStatus!=='paid');
     if(!d) return;
     if(!confirm('این کار لغو شود؟')) return;
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
@@ -3341,7 +3876,7 @@ function renderAdmin(){
 }
 function serviceName(service){ return SERVICE_DEFS[service]?.name || service || '—'; }
 function formatMoney(value){ return fmtNum(Number(value)||0)+' تومان'; }
-function requestDate(r){ const start = r?.data?.dateStart || r?.data?.date; const end = r?.data?.dateEnd; if(start && end) return humanJalaliDate(start)+' تا '+humanJalaliDate(end); if(start) return humanJalaliDate(start); return '—'; }
+function requestDate(r){ const start = r?.data?.dateStart || r?.data?.date; const end = r?.data?.dateEnd; if(start) return formatDealRangeDate(start, end || start); return '—'; }
 function requestAmount(r){ if(r?.data?.area) return toPersianDigits(r.data.area)+' هکتار'; return '—'; }
 const driveImageMap={"harvest.jpg":"https://cdn.imgurl.ir/uploads/c669299_harvest.jpg","pickup.jpg":"https://cdn.imgurl.ir/uploads/b00687_pickup.jpg","spray.jpg":"https://cdn.imgurl.ir/uploads/a133_spray.jpg","tractor.jpg":"https://cdn.imgurl.ir/uploads/f75498_tractor.jpg","transplant.jpg":"https://cdn.imgurl.ir/uploads/g9655_transant.jpg"};
 
@@ -3370,8 +3905,9 @@ document.addEventListener('DOMContentLoaded', async function(){
             if(preStyle) preStyle.remove();
             if(serverUser){
                 enterAuthenticatedUser(serverUser,{render:false});
-                await refreshServerSnapshot(true);
+                await refreshServerSnapshot(false);
                 if(!currentUser.profileCompleted) showCompleteProfile();
+                else renderApp();
             }else{
                 const landing=document.getElementById('landing');
                 const app=document.getElementById('app');

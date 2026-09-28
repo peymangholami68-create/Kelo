@@ -42,6 +42,7 @@
     async createReview(payload){return mutate('/reviews','POST',payload);},
     async rejectRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id)+'/reject','POST',{});},
     async cancelRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id),'DELETE',{});},
+    async payDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/pay','POST',{});},
     async cancelDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/cancel','POST',{});},
     async completeDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/complete','POST',{});}
   };

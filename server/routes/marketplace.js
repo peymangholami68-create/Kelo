@@ -341,13 +341,35 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
   res.json({ok:true,providers:out});
 }catch(e){next(e)}});
 
-router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=await pool.connect();try{const b=req.body||{};const r=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 for update`,[req.params.id]);if(!r.rows[0])return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});const request=r.rows[0];const proposerId=req.session.userId;const recipientId=String(b.recipientId||b.providerId||'');if(!recipientId)return res.status(400).json({ok:false,error:'گیرنده پیشنهاد مشخص نشده است.'});if(recipientId===proposerId)return res.status(400).json({ok:false,error:'ارسال پیشنهاد به خودتان مجاز نیست.'});
+router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=await pool.connect();try{const b=req.body||{};const r=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 for update`,[req.params.id]);if(!r.rows[0])return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});let request=r.rows[0];const proposerId=req.session.userId;const recipientId=String(b.recipientId||b.providerId||'');if(!recipientId)return res.status(400).json({ok:false,error:'گیرنده پیشنهاد مشخص نشده است.'});if(recipientId===proposerId)return res.status(400).json({ok:false,error:'ارسال پیشنهاد به خودتان مجاز نیست.'});
     const isOwner=String(request.requester_id)===String(proposerId);
     const listing=b.listingId ? (await client.query(`select l.*,s.slug service_slug from service_listings l join service_types s on s.id=l.service_type_id where l.id=$1 and l.provider_id=$2 and l.status='active'`,[b.listingId,proposerId])).rows[0] : null;
     if(b.listingId && !listing)return res.status(400).json({ok:false,error:'خدمت انتخاب‌شده معتبر نیست.'});
     if(!isOwner && !listing && request.request_kind==='need'){
       const ownProvide=await client.query(`select id from requests where requester_id=$1 and request_kind='provide' and status not in ('cancelled','completed','expired') and service_type_id=$2 limit 1`,[proposerId,request.service_type_id]);
       if(!ownProvide.rowCount)return res.status(403).json({ok:false,error:'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.'});
+    }
+    // Bug fix: when the anchor request is a 'provide' ad, its owner plays the
+    // provider role in the resulting deal (see accept_request_recipient),
+    // and the real farmer/customer is the OTHER side of this proposal. Date,
+    // area and status must come from THAT person's own 'need' request, not
+    // from the ad's general availability window — otherwise the total comes
+    // out 0 for هکتار/تن pricing (the ad has no area), the booking gets the
+    // owner's own date range instead of the farmer's, and the two sides'
+    // request cards end up with swapped active/inactive states.
+    if(request.request_kind === 'provide'){
+      const farmerUserId = isOwner ? recipientId : proposerId;
+      const farmerReq = await client.query(
+        `select r.*, s.slug service_slug from requests r join service_types s on s.id=r.service_type_id
+         where r.requester_id=$1 and r.request_kind='need' and r.service_type_id=$2
+           and r.status not in ('cancelled','completed','expired') order by r.created_at desc limit 1 for update`,
+        [farmerUserId, request.service_type_id]
+      );
+      // If the farmer has no formal 'need' request (they proposed straight
+      // to the ad without going through their own request first), there is
+      // no farmer-specific date/area anywhere yet to re-anchor to — fall
+      // back to the ad's own data, same as before this fix.
+      if(farmerReq.rows[0]) request = farmerReq.rows[0];
     }
     const existing=await client.query(`select id from request_recipients where request_id=$1 and proposer_id=$2 and recipient_id=$3 and status in ('pending','accepted')`,[request.id,proposerId,recipientId]);if(existing.rowCount)return res.status(409).json({ok:false,error:'این پیشنهاد قبلاً ارسال شده است.'});
     const __reciprocal=await client.query("select id from request_recipients where request_id=$1 and status in ('pending','accepted') and ((proposer_id=$2 and recipient_id=$3) or (proposer_id=$3 and recipient_id=$2)) limit 1",[request.id,proposerId,recipientId]);if(__reciprocal.rowCount)return res.status(409).json({ok:false,error:'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
@@ -374,7 +396,7 @@ router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=a
 router.delete('/request-recipients/:id', auth, async(req,res,next)=>{
   try{
     const r = await pool.query(
-      "update request_recipients set status='closed', closed_at=now() where id=$1 and proposer_id=$2 and status='pending' returning id",
+      "update request_recipients set status='closed', closed_at=now(), responded_at=now() where id=$1 and proposer_id=$2 and status='pending' returning id",
       [req.params.id, req.session.userId]
     );
     if(!r.rowCount) return res.status(404).json({ok:false,error:'این پیشنهاد قابل لغو نیست.'});
@@ -385,8 +407,41 @@ router.post('/request-recipients/:id/reject',auth,async(req,res,next)=>{try{cons
 
 router.post('/request-recipients/:id/accept',auth,async(req,res,next)=>{try{const r=await pool.query('select * from accept_request_recipient($1,$2)',[req.params.id,req.session.userId]);const snap=await getSnapshot(req.session.userId);res.json({ok:true,bookingId:r.rows[0].booking_id,dealId:r.rows[0].deal_id,data:snap})}catch(e){const map={recipient_not_found:404,request_not_found:404,not_allowed:403,recipient_not_pending:409,request_not_open:409,request_already_agreed:409,machine_unavailable:409,provider_has_unfinished_deal:409};const status=map[e.message]||500;res.status(status).json({ok:false,error:e.message==='provider_has_unfinished_deal'?'برای پذیرش خدمت جدید ابتدا اتمام کار قبلی را ثبت کنید.':e.message})}});
 
-router.post('/deals/:id/cancel',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and (requester_id=$2 or provider_id=$2) for update`,[req.params.id,req.session.userId])).rows[0];if(!d)return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});if(d.status==='completed')return res.status(409).json({ok:false,error:'کار تکمیل شده قابل لغو نیست.'});await client.query(`update deals set status='cancelled',cancelled_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='cancelled' where id=$1`,[d.booking_id]);await client.query(`update requests set status='pending' where id=$1 and status<>'completed'`,[d.request_id]);await client.query(`update request_recipients set status='closed',closed_at=now() where request_id=$1 and status='accepted'`,[d.request_id]);await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
+// Cash payment: only the customer (requester) of the deal can mark it paid.
+// Persisted on the server so BOTH parties see the "paid" chip and it survives
+// a page refresh (before this, payment only lived in the browser's memory).
+router.post('/deals/:id/pay',auth,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const d=(await client.query(`select * from deals where id=$1 and requester_id=$2 for update`,[req.params.id,req.session.userId])).rows[0];
+    if(!d){await client.query('rollback');return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});}
+    if(d.status==='cancelled'){await client.query('rollback');return res.status(409).json({ok:false,error:'توافق لغو شده قابل پرداخت نیست.'});}
+    if(d.payment_status==='paid'){await client.query('rollback');return res.status(409).json({ok:false,error:'این توافق قبلاً پرداخت شده است.'});}
+    await client.query(`update deals set payment_status='paid' where id=$1`,[d.id]);
+    const amount=Number(d.total)||0;
+    if(amount>0){await client.query(`insert into payments(deal_id,payer_id,amount,gateway,status,paid_at,metadata) values($1,$2,$3,'cash','paid',now(),$4::jsonb)`,[d.id,req.session.userId,amount,JSON.stringify({method:'cash'})]);}
+    await client.query('commit');
+    res.json({ok:true,data:await getSnapshot(req.session.userId)});
+  }catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}
+});
 
-router.post('/deals/:id/complete',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and provider_id=$2 for update`,[req.params.id,req.session.userId])).rows[0];if(!d)return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});const b=(await client.query('select * from bookings where id=$1',[d.booking_id])).rows[0];if(b && new Date(`${b.end_date}T23:59:59`) > new Date())return res.status(409).json({ok:false,error:'اتمام کار در پایان زمان ثبت‌شده فعال می‌شود.'});await client.query(`update deals set status='completed',completed_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='completed' where id=$1`,[d.booking_id]);await client.query(`update requests set status='completed' where id=$1`,[d.request_id]);await client.query(`update request_recipients set status='completed' where request_id=$1 and status='accepted'`,[d.request_id]);await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
+router.post('/deals/:id/cancel',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and (requester_id=$2 or provider_id=$2) for update`,[req.params.id,req.session.userId])).rows[0];if(!d){await client.query('rollback');return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});}if(d.status==='completed'||d.status==='cancelled'){await client.query('rollback');return res.status(409).json({ok:false,error:'این توافق در وضعیتی نیست که بتوان آن را لغو کرد.'});}if(d.payment_status==='paid'){await client.query('rollback');return res.status(409).json({ok:false,error:'توافقی که پرداخت شده قابل لغو نیست.'});}await client.query(`update deals set status='cancelled',cancelled_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='cancelled' where id=$1`,[d.booking_id]);await client.query(`update requests set status='pending' where id=$1 and status<>'completed'`,[d.request_id]);
+  // Lifecycle decision: on cancel, THIS recipient row stays 'closed' (not
+  // reopened) — that provider must send a brand-new proposal to be
+  // considered again on this request.
+  await client.query(`update request_recipients set status='closed',closed_at=now() where request_id=$1 and status='accepted'`,[d.request_id]);
+  // Mirrors the same rule already used in Local mode (js/app.js cancelDeal):
+  // any OTHER candidate on this request that was auto-closed only because
+  // this deal got accepted (status='closed' and responded_at is still null —
+  // i.e. they never explicitly rejected or withdrew) becomes 'pending' again,
+  // so the farmer immediately has other options instead of needing everyone
+  // to resend from scratch. A candidate who was explicitly rejected, or who
+  // withdrew their own proposal, has responded_at/closed_at set already and
+  // is correctly left alone.
+  await client.query(`update request_recipients set status='pending',closed_at=null where request_id=$1 and status='closed' and responded_at is null`,[d.request_id]);
+  await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
+
+router.post('/deals/:id/complete',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and provider_id=$2 for update`,[req.params.id,req.session.userId])).rows[0];if(!d){await client.query('rollback');return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});}if(d.status==='completed'||d.status==='cancelled'){await client.query('rollback');return res.status(409).json({ok:false,error:'این توافق در وضعیتی نیست که بتوان آن را تکمیل کرد.'});}const b=(await client.query('select * from bookings where id=$1',[d.booking_id])).rows[0];if(b && new Date(`${b.end_date}T23:59:59`) > new Date()){await client.query('rollback');return res.status(409).json({ok:false,error:'اتمام کار در پایان زمان ثبت‌شده فعال می‌شود.'});}await client.query(`update deals set status='completed',completed_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='completed' where id=$1`,[d.booking_id]);await client.query(`update requests set status='completed' where id=$1`,[d.request_id]);await client.query(`update request_recipients set status='completed' where request_id=$1 and status='accepted'`,[d.request_id]);await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
 
 module.exports = router;
