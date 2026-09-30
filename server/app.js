@@ -266,7 +266,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     if (userRow) {
       if (!verifyNationalId(nationalId, userRow.national_id_verifier)) {
-        return res.status(401).json({ error: 'اطلاعات ورود صحیح نیست.' });
+        return res.status(401).json({ error: 'این شماره همراه قبلاً با کد ملی دیگری ثبت شده است.' });
       }
       if (authMode === 'admin' && !userRow.system_roles.includes('admin')) {
         return res.status(401).json({ error: 'اطلاعات ورود مدیر صحیح نیست.' });
