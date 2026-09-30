@@ -237,6 +237,9 @@ async function refreshServerSnapshot(render){
 function enterAuthenticatedUser(user, options){
     options = options || {};
     currentUser = upsertAuthenticatedUserMirror(user);
+    if (window.KeloState && typeof window.KeloState.setCurrentUser === 'function') {
+        window.KeloState.setCurrentUser(currentUser);
+    }
     saveSession();
     closeLogin();
     const landing=document.getElementById("landing");
@@ -311,76 +314,96 @@ function openAdminLogin(){ authMode="admin"; const modal=document.getElementById
 function closeLogin(){ const modal=document.getElementById("loginModal"); if(modal) modal.classList.add("hidden"); const phone=document.getElementById("loginPhone"), nid=document.getElementById("loginNationalId"); if(phone)phone.value=""; if(nid)nid.value=""; clearAuthError(); }
 function ensureSystemRoles(user){ if(!user) return []; if(!Array.isArray(user.systemRoles)) user.systemRoles=[]; return user.systemRoles; }
 function isAdmin(user){ return !!user && ensureSystemRoles(user).includes("admin"); }
+
+// Phase 1 — اتصال LocalAdapter به DB محلی (بعد از تعریف helpers)
+if (window.KeloLocalAdapter && typeof window.KeloLocalAdapter.bindDataAccess === 'function') {
+    window.KeloLocalAdapter.bindDataAccess({
+        getDB: function () { return db; },
+        saveDB: function () { return saveDB(); },
+        normalizePhone: function (v) { return normalizePhone(v); },
+        normalizeNationalId: function (v) { return normalizeNationalId(v); },
+        isAdmin: function (u) { return isAdmin(u); }
+    });
+}
 async function login(e){
     e.preventDefault(); clearAuthError();
-    const phone=normalizePhone(document.getElementById("loginPhone").value);
-    const nationalId=normalizeNationalId(document.getElementById("loginNationalId").value);
-    if(!/^09\d{9}$/.test(phone)){ showAuthError("شماره تلفن همراه معتبر نیست."); return; }
-    if(!/^\d{10}$/.test(nationalId)){ showAuthError("کد ملی باید ۱۰ رقم باشد."); return; }
+    const phone = (window.KeloService && window.KeloService.auth)
+        ? window.KeloService.auth.normalizePhone(document.getElementById("loginPhone").value)
+        : normalizePhone(document.getElementById("loginPhone").value);
+    const nationalId = (window.KeloService && window.KeloService.auth)
+        ? window.KeloService.auth.normalizeNationalId(document.getElementById("loginNationalId").value)
+        : normalizeNationalId(document.getElementById("loginNationalId").value);
 
-    if(window.KeloBackend && window.KeloBackend.isServerError()){
-        showAuthError('ارتباط با سرور کِلو برقرار نشد. لطفاً دوباره تلاش کنید.');
+    const authApi = window.KeloService && window.KeloService.auth;
+    if (!authApi) {
+        showAuthError('سرویس ورود در دسترس نیست.');
         return;
     }
 
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            const result = await window.KeloBackend.login(phone, nationalId, authMode);
-            if(result && result.user){
-                enterAuthenticatedUser(result.user, { created: !!result.created, render:false });
-                await refreshServerSnapshot(false);
-                if(!currentUser.profileCompleted) showCompleteProfile();
-                else renderApp();
-                return;
-            }
-            showAuthError('ورود انجام نشد.');
-            return;
-        }catch(err){
-            const msg = err && err.status === 401
-                ? (authMode === 'admin' ? 'اطلاعات ورود مدیر صحیح نیست.' : ((err.body && err.body.error) || 'شماره همراه یا کد ملی صحیح نیست.'))
-                : ((err && err.body && err.body.error) || 'خطا در ارتباط با سرور.');
-            showAuthError(msg);
-            return;
-        }
-    }
-
-    if(authMode==="admin"){ adminLoginValues(phone,nationalId); return; }
-    const existing=db.users.find(u=>normalizePhone(u.phone)===phone);
-    if(existing){
-        if(normalizeNationalId(existing.nationalId)!==nationalId){ showAuthError("این شماره همراه قبلاً با کد ملی دیگری ثبت شده است."); return; }
-        enterAuthenticatedUser(existing);
+    const result = await authApi.login({ phone: phone, nationalId: nationalId, authMode: authMode || 'public' });
+    if (!result || !result.ok) {
+        showAuthError((result && result.message) || 'ورود انجام نشد.');
         return;
     }
-    const duplicate=db.users.find(u=>normalizeNationalId(u.nationalId)===nationalId);
-    if(duplicate){ showAuthError("این کد ملی قبلاً ثبت شده است."); return; }
-    const newUser={ id:"u_"+Date.now()+"_"+Math.random().toString(36).slice(2,8), name:"", phone, nationalId, profileCompleted:false, profile:{} };
-    db.users.push(newUser); saveDB(); enterAuthenticatedUser(newUser, { render:false }); showCompleteProfile();
+
+    const user = result.data && result.data.user;
+    if (!user) {
+        showAuthError('ورود انجام نشد.');
+        return;
+    }
+
+    enterAuthenticatedUser(user, { created: !!(result.data && result.data.created), render: false });
+    if (window.KeloBackend && window.KeloBackend.isServerMode()) {
+        try { await refreshServerSnapshot(false); } catch (err) { console.warn('kelo snapshot after login:', err); }
+    }
+    if (!currentUser.profileCompleted) showCompleteProfile();
+    else renderApp();
 }
-async function adminLoginValues(phone,nationalId){
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            const result = await window.KeloBackend.login(phone, nationalId, 'admin');
-            if(result && result.user){ enterAuthenticatedUser(result.user,{render:false}); await refreshServerSnapshot(false); if(!currentUser.profileCompleted) showCompleteProfile(); else renderApp(); return; }
-            showAuthError('اطلاعات ورود مدیر صحیح نیست.');
-        }catch(err){ showAuthError('اطلاعات ورود مدیر صحیح نیست.'); }
+async function adminLoginValues(phone, nationalId){
+    // سازگاری با فراخوانی‌های قدیمی — مسیر اصلی login از KeloService.auth است
+    authMode = 'admin';
+    const authApi = window.KeloService && window.KeloService.auth;
+    if (!authApi) { showAuthError('سرویس ورود در دسترس نیست.'); return; }
+    const result = await authApi.login({ phone: phone, nationalId: nationalId, authMode: 'admin' });
+    if (!result || !result.ok) {
+        showAuthError((result && result.message) || 'اطلاعات ورود مدیر صحیح نیست.');
         return;
     }
-    const admin=db.users.find(u=>isAdmin(u) && normalizePhone(u.phone)===phone);
-    if(!admin || normalizeNationalId(admin.nationalId)!==nationalId){ showAuthError("اطلاعات ورود مدیر صحیح نیست."); return; }
-    enterAuthenticatedUser(admin);
+    const user = result.data && result.data.user;
+    if (!user) { showAuthError('اطلاعات ورود مدیر صحیح نیست.'); return; }
+    enterAuthenticatedUser(user, { render: false });
+    if (window.KeloBackend && window.KeloBackend.isServerMode()) {
+        try { await refreshServerSnapshot(false); } catch (err) { console.warn('kelo snapshot after admin login:', err); }
+    }
+    if (!currentUser.profileCompleted) showCompleteProfile();
+    else renderApp();
 }
 async function logout(){
-    try{
-        if(window.KeloBackend && window.KeloBackend.isServerMode()) await window.KeloBackend.logout();
-    }catch(e){ console.warn('KELO logout API failed', e); }
-    closeMobileAccountSheet(); currentUser=null; clearSession();
-    const app=document.getElementById("app"), landing=document.getElementById("landing"), modal=document.getElementById("loginModal");
-    if(app)app.classList.add("hidden"); if(landing)landing.classList.remove("hidden"); if(modal)modal.classList.add("hidden");
+    try {
+        if (window.KeloService && window.KeloService.auth) {
+            await window.KeloService.auth.logout();
+        } else if (window.KeloBackend && window.KeloBackend.isServerMode()) {
+            await window.KeloBackend.logout();
+        }
+    } catch (e) { console.warn('KELO logout failed', e); }
+    closeMobileAccountSheet();
+    currentUser = null;
+    clearSession();
+    if (window.KeloState && typeof window.KeloState.clearCurrentUser === 'function') {
+        window.KeloState.clearCurrentUser();
+    }
+    const app = document.getElementById("app"), landing = document.getElementById("landing"), modal = document.getElementById("loginModal");
+    if (app) app.classList.add("hidden");
+    if (landing) landing.classList.remove("hidden");
+    if (modal) modal.classList.add("hidden");
     setAppActive(false);
     const preStyle = document.getElementById('keloPreloadHideLanding');
-    if(preStyle) preStyle.remove();
-    window.location.hash=""; clearAuthError(); window.scrollTo({top:0,behavior:"auto"});
+    if (preStyle) preStyle.remove();
+    window.location.hash = "";
+    clearAuthError();
+    window.scrollTo({ top: 0, behavior: "auto" });
 }
+
 
 function profileMapPickerHtml(placeholderText){
     return '<div class="profile-map-placeholder"><svg viewBox="0 0 24 24"><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3"/></svg><span>'+escapeHtml(placeholderText)+'</span></div>';
@@ -444,43 +467,41 @@ function showCompleteProfile(){
 
 async function saveFirstProfile(e){
     e.preventDefault();
-    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user) return;
+    if (!currentUser) return;
     const nameEl = document.getElementById('firstProfileName');
     const name = (nameEl ? nameEl.value : '').trim();
-    if(!name || name.length < 2){ showToast('نام و نام خانوادگی را وارد کنید.', 'error'); return; }
-
     const profile = Object.assign({}, currentUser.profile || {});
     const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
-    if(profileLocation){
-        if(profileLocation.city) profile.city = profileLocation.city;
-        if(profileLocation.province) profile.province = profileLocation.province;
+    if (profileLocation) {
+        if (profileLocation.city) profile.city = profileLocation.city;
+        if (profileLocation.province) profile.province = profileLocation.province;
     }
 
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, profile, profileLocation, profileCompleted:true }));
-            currentUser = upsertAuthenticatedUserMirror(updated.user || updated);
-        }catch(err){
-            showToast((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.','error');
-            return;
-        }
-    }else{
-        user.name = name;
-        user.profile = profile;
-        if(profileLocation) user.profileLocation = profileLocation;
-        user.profileCompleted = true;
-        saveDB();
-        currentUser = user;
+    const profileApi = window.KeloService && window.KeloService.profile;
+    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
+
+    const result = await profileApi.save({
+        userId: currentUser.id,
+        name: name,
+        profile: profile,
+        profileLocation: profileLocation,
+        profileCompleted: true
+    });
+    if (!result || !result.ok) {
+        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
+        return;
     }
+    currentUser = upsertAuthenticatedUserMirror(result.data.user);
+    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
 
     wizard._pendingProfileLocation = null;
     wizard._profileAutoGeoRequested = false;
-    document.getElementById('avatar').innerText = currentUser.name;
+    const av = document.getElementById('avatar'); if (av) av.innerText = currentUser.name;
     updateMobileAccountIdentity();
-    const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.remove('hidden');
-    const app=document.getElementById('app');
-    if(app) app.classList.remove('mobile-tab-profile-edit');
-    showToast('اطلاعات ذخیره شد','success');
+    const nav = document.getElementById('mobileBottomNav'); if (nav) nav.classList.remove('hidden');
+    const app = document.getElementById('app');
+    if (app) app.classList.remove('mobile-tab-profile-edit');
+    showToast((result.message) || 'اطلاعات ذخیره شد','success');
     renderApp();
 }
 
@@ -517,85 +538,82 @@ function updateProfileCities(){
 }
 async function saveProfile(e){
     e.preventDefault();
-    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user)return;
-    const name=document.getElementById("pName").value.trim();
-    const province=document.getElementById("pProvince").value;
-    const city=document.getElementById("pCity").value;
-    const village=document.getElementById("pVillage").value.trim();
-    if(!name || name.length<2){ showToast('نام کامل را وارد کنید.','error'); return; }
-    if(!city){ showToast('شهر را انتخاب کنید.','error'); return; }
-    const profile={province,city,village:village||""};
+    if (!currentUser) return;
+    const name = document.getElementById("pName").value.trim();
+    const province = document.getElementById("pProvince").value;
+    const city = document.getElementById("pCity").value;
+    const village = document.getElementById("pVillage").value.trim();
+    const profile = { province: province, city: city, village: village || "" };
 
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, profile, profileCompleted:true }));
-            currentUser = upsertAuthenticatedUserMirror(updated.user || updated);
-        }catch(err){
-            showToast((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.','error');
-            return;
-        }
-    }else{
-        user.name=name; user.profile=profile; user.profileCompleted=true;
-        saveDB(); currentUser=user;
+    const profileApi = window.KeloService && window.KeloService.profile;
+    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
+
+    const result = await profileApi.save({
+        userId: currentUser.id,
+        name: name,
+        profile: profile,
+        profileCompleted: true,
+        requireCity: true
+    });
+    if (!result || !result.ok) {
+        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
+        return;
     }
+    currentUser = upsertAuthenticatedUserMirror(result.data.user);
+    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
 
-    document.getElementById("avatar").innerText=currentUser.name;
+    const av = document.getElementById("avatar"); if (av) av.innerText = currentUser.name;
     updateMobileAccountIdentity();
     const sheetOpen = document.getElementById('mobileAccountBackdrop') && document.getElementById('mobileAccountBackdrop').classList.contains('open');
-    if(sheetOpen){
+    if (sheetOpen) {
         renderMobileAccountSection('profile');
         return;
     }
-    const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.remove('hidden');
-    const app=document.getElementById('app');
-    if(app) app.classList.remove('mobile-tab-profile-edit');
+    const nav = document.getElementById('mobileBottomNav'); if (nav) nav.classList.remove('hidden');
+    const app = document.getElementById('app');
+    if (app) app.classList.remove('mobile-tab-profile-edit');
     renderApp();
 }
 async function saveProfileEdit(e){
     e.preventDefault();
-    const user=db.users.find(u=>String(u.id)===String(currentUser.id)) || currentUser; if(!user)return;
-    const nameEl=document.getElementById('editName');
-    const phoneEl=document.getElementById('editPhone');
-    const nidEl=document.getElementById('editNationalId');
-    const name=(nameEl?nameEl.value:'').trim();
-    const phoneRaw=(phoneEl?phoneEl.value:'').trim();
-    const nidRaw=(nidEl?nidEl.value:'').trim();
-    const phone=normalizePhone(phoneRaw);
-    const nid=normalizeNationalId(nidRaw);
-    if(!name || name.length<2){ showToast('نام کامل را وارد کنید.','error'); return; }
-    if(!/^09\d{9}$/.test(phone)){ showToast('شماره همراه معتبر نیست.','error'); return; }
-    if(!/^\d{10}$/.test(nid)){ showToast('کد ملی باید ۱۰ رقم باشد.','error'); return; }
+    if (!currentUser) return;
+    const nameEl = document.getElementById('editName');
+    const phoneEl = document.getElementById('editPhone');
+    const nidEl = document.getElementById('editNationalId');
+    const name = (nameEl ? nameEl.value : '').trim();
+    const phoneRaw = (phoneEl ? phoneEl.value : '').trim();
+    const nidRaw = (nidEl ? nidEl.value : '').trim();
 
-    const profile=Object.assign({}, currentUser.profile || {});
-    const profileLocation=wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
-    if(profileLocation){
-        if(profileLocation.city) profile.city=profileLocation.city;
-        if(profileLocation.province) profile.province=profileLocation.province;
+    const profile = Object.assign({}, currentUser.profile || {});
+    const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
+    if (profileLocation) {
+        if (profileLocation.city) profile.city = profileLocation.city;
+        if (profileLocation.province) profile.province = profileLocation.province;
     }
 
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            const updated = await window.KeloBackend.updateProfile(getBackendUserPayload({ name, phone, nationalId:nid, profile, profileLocation, profileCompleted:true }));
-            currentUser=upsertAuthenticatedUserMirror(updated.user || updated);
-        }catch(err){
-            const msg = err && err.status === 409 ? ((err.body && err.body.error) || 'این شماره همراه یا کد ملی قبلاً ثبت شده است.') : ((err && err.body && err.body.error) || 'ذخیره اطلاعات روی سرور انجام نشد.');
-            showToast(msg,'error');
-            return;
-        }
-    }else{
-        const dupPhone=db.users.find(u=>String(u.id)!==String(user.id) && normalizePhone(u.phone)===phone);
-        if(dupPhone){ showToast('این شماره همراه قبلاً ثبت شده است.','error'); return; }
-        const dupNid=db.users.find(u=>String(u.id)!==String(user.id) && normalizeNationalId(u.nationalId)===nid);
-        if(dupNid){ showToast('این کد ملی قبلاً ثبت شده است.','error'); return; }
-        user.name=name; user.phone=phone; user.nationalId=nid; user.profileCompleted=true;
-        user.profile=profile;
-        if(profileLocation) user.profileLocation=profileLocation;
-        saveDB(); currentUser=user;
-    }
+    const profileApi = window.KeloService && window.KeloService.profile;
+    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
 
-    document.getElementById('avatar').innerText=currentUser.name;
-    wizard._pendingProfileLocation=null;
-    showToast('اطلاعات ذخیره شد','success');
+    const result = await profileApi.save({
+        userId: currentUser.id,
+        name: name,
+        phone: phoneRaw,
+        nationalId: nidRaw,
+        profile: profile,
+        profileLocation: profileLocation,
+        profileCompleted: true,
+        allowIdentityChange: true
+    });
+    if (!result || !result.ok) {
+        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
+        return;
+    }
+    currentUser = upsertAuthenticatedUserMirror(result.data.user);
+    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
+
+    const av = document.getElementById('avatar'); if (av) av.innerText = currentUser.name;
+    wizard._pendingProfileLocation = null;
+    showToast((result.message) || 'اطلاعات ذخیره شد','success');
     renderMobileAccountSection('profile');
 }
 function farmerAvatarSvg(){
@@ -1294,7 +1312,7 @@ async function finalizeMobileForm(){
             request.requesterName=currentUser.name;
             request.updated=new Date().toISOString();
             // بعد از ویرایش همه پیشنهادهای قبلی پاک شوند
-            db.requestRecipients.filter(x=>(x.requestId===request.id || x.anchorRequestId===request.id) && (x.status==='pending' || x.status==='accepted')).forEach(function(x){ x.status='closed'; x.closedAt=new Date().toISOString(); });
+            db.requestRecipients=db.requestRecipients.filter(x=>x.requestId!==request.id);
             newId=request.id;
         }else{
             const request = { id: "r" + Date.now() + Math.random().toString(36).slice(2,6), userId: currentUser.id, requesterName: currentUser.name, requestKind: savedType==='provide'?'provide':'need', service: savedService, data: data, status: "pending", created: new Date().toISOString() };
@@ -1474,7 +1492,7 @@ function editRequest(requestId){
 async function deleteRequest(requestId){
     const req=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
     if(!req) return;
-    if(req.status==='accepted' || req.status==='in_progress' || req.status==='completed' || req.status==='cancelled'){
+    if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
         showToast('درخواست توافق‌شده قابل حذف نیست','error'); return;
     }
     if(!confirm('این درخواست حذف شود؟')) return;
@@ -1483,7 +1501,7 @@ async function deleteRequest(requestId){
     }
     // Local mirrors Server: keep the request for history and mark it cancelled.
     req.status='cancelled';
-    db.requestRecipients.filter(x=>(x.requestId===requestId || x.anchorRequestId===requestId) && (x.status==='pending' || x.status==='accepted')).forEach(function(x){
+    db.requestRecipients.filter(x=>x.requestId===requestId && (x.status==='pending' || x.status==='accepted')).forEach(function(x){
         x.status='closed';
         x.closedAt=new Date().toISOString();
     });
@@ -2274,42 +2292,18 @@ async function openRequestOffersMap(requestId){
             return;
         }
     }
-    // Apply the same client-side eligibility rules to Server candidates as Local.
-    // Server remains authoritative for authorization/POST validation; this keeps
-    // the sheet visually consistent when activity-area/booking data are available.
-    if(req.requestKind === 'provide'){
-        candidates = candidates.filter(function(o){
-            const targetId = o.targetRequestId || o.data?.requestId;
-            const need = db.requests.find(function(r){ return String(r.id)===String(targetId); });
-            if(!need) return false;
-            const nr = getRequestDateRange(need);
-            if(!nr.start || !nr.end) return false;
-            if(!listingAvailableForRequest(req, nr.start, nr.end)) return false;
-            const pseudo = {service:req.service, data:{activityArea:req.data?.activityArea||[]}};
-            if(!listingMatchesRequest(pseudo, need)) return false;
-            if(hasProviderBookingConflict(req.userId, null, nr.start, nr.end)) return false;
-            o.targetRequestId = need.id;
-            o.offerKey = String(o.providerId)+'|'+String(need.id);
-            return true;
-        });
-    } else {
-        candidates = candidates.filter(function(o){
-            const pseudo = {service:o.service || req.service, data:o.data || {}};
-            const rr = getRequestDateRange(req);
-            if(!listingMatchesRequest(pseudo,req)) return false;
-            if(!listingAvailableForRequest(pseudo,rr.start,rr.end)) return false;
-            if(rr.start && hasProviderBookingConflict(o.providerId,o.machineId || o.listingId || null,rr.start,rr.end)) return false;
-            o.targetRequestId = req.id;
-            o.offerKey = String(o.providerId)+'|'+String(req.id);
-            return true;
-        });
-    }
     const _myId = String(currentUser.id);
     // For a provider's own 'provide' ad, proposals are stored against the
     // farmer's 'need' request (not the ad), so match those by counterparty too.
     const currentRecipients = db.requestRecipients.filter(function(x){
-        if(!_isProvideReq) return String(x.requestId) === String(req.id);
-        return String(x.anchorRequestId || x.sourceRequestId || '') === String(req.id);
+        if(x.requestId===req.id) return true;
+        if(!_isProvideReq) return false;
+        const _px = String(x.proposerId || x.proposer_id || '');
+        const _rx = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
+        if(_px !== _myId && _rx !== _myId) return false;
+        const _rq = db.requests.find(function(q){ return q.id === x.requestId; });
+        if(_rq && _rq.requestKind === 'provide') return false;
+        return (_rq ? _rq.service : x.service) === req.service;
     });
     const recipientByProvider = {};
     currentRecipients.forEach(function(x){
@@ -2317,30 +2311,26 @@ async function openRequestOffersMap(requestId){
         const _r = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
         const _o = _p === _myId ? _r : _p;
         if(!_o || _o === _myId) return;
-        const _target = String(x.requestId || x.targetRequestId || '');
-        const _key = _o+'|'+_target;
-        const existing = recipientByProvider[_key];
+        const existing = recipientByProvider[_o];
         const xActive  = (x.status === 'pending' || x.status === 'accepted');
         const exActive = existing && (existing.status === 'pending' || existing.status === 'accepted');
         if(xActive && !exActive){
-            recipientByProvider[_key] = x;
+            recipientByProvider[_o] = x;
         } else if(!existing){
-            recipientByProvider[_key] = x;
+            recipientByProvider[_o] = x;
         }
     });
     const providersHtml = candidates.length ? candidates.map(o=>{
-        const rec=recipientByProvider[o.providerId+'|'+String(o.targetRequestId || req.id)];
+        const rec=recipientByProvider[o.providerId];
         let action='';
         if(rec && rec.status==='pending'){
             action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
-        }else if(rec && rec.status==='accepted'){
-            action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
         }else if(rec && rec.status==='rejected'){
-            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\',\''+String(o.targetRequestId || req.id)+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
+            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
         }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
             action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
         }else{
-            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\',\''+String(o.targetRequestId || req.id)+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
+            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
         }
         const service = o.service || req.service;
         let _subOpt = '';
@@ -2378,7 +2368,7 @@ async function openRequestOffersMap(requestId){
         }
         const priceLine = o.unitPrice ? fmtNum(o.unitPrice) + (o.priceUnit ? ' '+o.priceUnit : '') : '\u062a\u0648\u0627\u0641\u0642\u06cc';
         const _showPrice = !_isProvideReq;
-        return '<div class="request-offers-list-item" data-offer-id="'+escapeHtml(o.offerKey || (o.providerId+'|'+String(o.targetRequestId || req.id)))+'" onclick="focusOfferOnMap(\''+escapeHtml(o.offerKey || (o.providerId+'|'+String(o.targetRequestId || req.id)))+'\')">'
+        return '<div class="request-offers-list-item" data-offer-id="'+escapeHtml(o.providerId)+'" onclick="focusOfferOnMap(\''+escapeHtml(o.providerId)+'\')">'
             +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(_serviceDisplay)+_ratingHtml+'</strong></div>'
             +'<div class="kelo-card-info-list">'+_infoHtml+'</div>'
             +(_showPrice ? '<div class="offer-card-price">'+priceLine+'</div>' : '')
@@ -2494,7 +2484,7 @@ function initOffersMap(req, offers){
         const offerIcon = L.divIcon({ className: 'kelo-offer-marker', html: '<div style="background:#5B9BB5;border:2.5px solid #fff;border-radius:50%;width:36px;height:36px;display:grid;place-items:center;font-weight:900;font-size:15px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.3);">' + toPersianDigits(idx + 1) + '</div>', iconSize: [36, 36], iconAnchor: [18, 18] });
         const marker = L.marker(pos, { icon: offerIcon }).addTo(map);
         marker.bindPopup('<div class="map-card-popup"><strong>' + escapeHtml(o.provider || 'ارائه‌دهنده') + '</strong><small>' + escapeHtml(serviceName(o.service)) + '<br>' + (o.total ? formatMoney(o.total) : 'توافقی') + '</small></div>');
-        const markerKey = String(o.offerKey || (o.providerId+'|'+String(o.targetRequestId || req.id)));
+        const markerKey = String(o.providerId);
         marker.on('click', () => { const item = document.querySelector('.request-offers-list-item[data-offer-id="' + markerKey + '"]'); if(item){ item.scrollIntoView({behavior: 'smooth', block: 'center'}); document.querySelectorAll('.request-offers-list-item').forEach(x => x.classList.remove('active')); item.classList.add('active'); } });
         window._keloOffersMarkers[markerKey] = marker;
         points.push(pos);
@@ -3555,63 +3545,46 @@ function getEligibleProvidersForRequest(request){
     const seen=new Set();
     const result=[];
 
-    // Need request: candidates are active service listings.
-    if(request.requestKind !== 'provide'){
-        db.listings
-          .filter(l=>l.status==='active' && l.userId!==request.userId && l.service===request.service)
-          .forEach(l=>{
-              if(!listingMatchesRequest(l,request)) return;
-              if(!listingAvailableForRequest(l, start, end)) return;
-              if(start && hasProviderBookingConflict(l.userId, l.id, start, end)) return;
-              const p=getProviderIdentityFromListing(l);
-              const key=p.providerId+'|'+(p.listingId||'');
-              if(seen.has(key)) return;
-              seen.add(key);
-              p.targetRequestId=request.id;
-              p.offerKey=p.providerId+'|'+request.id;
-              result.push(p);
-          });
-
-        return result;
-    }
-
-    // Provide request: every candidate is a specific, active need request.
-    // Never pick the "latest" need request for a user; the proposal must point
-    // to the exact need that matched this provide request.
-    const providerAvailability={
-        ...request,
-        data:{...(request.data||{}), activityArea:request.data?.activityArea || []}
-    };
-    db.requests
-      .filter(r=>r.requestKind==='need' && r.userId!==request.userId && r.service===request.service)
-      .filter(r=>!['cancelled','completed','expired'].includes(r.status) && !['cancelled','completed','expired'].includes(r.effectiveStatus||''))
-      .forEach(need=>{
-          const nRange=getRequestDateRange(need);
-          if(!nRange.start || !nRange.end) return;
-          if(!listingAvailableForRequest(providerAvailability, nRange.start, nRange.end)) return;
-          const pseudoListing={service:request.service,data:{activityArea:request.data?.activityArea||[]}};
-          if(!listingMatchesRequest(pseudoListing,need)) return;
-          if(hasProviderBookingConflict(request.userId, null, nRange.start, nRange.end)) return;
-          const price=Number(request.data?.price)||0;
-          const priceUnit=request.data?.priceUnit||'';
-          const key=String(need.userId)+'|'+String(need.id);
+    db.listings
+      .filter(l=>l.status==='active' && l.userId!==request.userId && l.service===request.service)
+      .forEach(l=>{
+          if(!listingMatchesRequest(l,request)) return;
+          if(!listingAvailableForRequest(l, start, end)) return;
+          if(start && hasProviderBookingConflict(l.userId, l.id, start, end)) return;
+          // Do NOT filter out providers with an active proposal here.
+          // They must remain in the list so the sheet can show «لغو ارسال».
+          const p=getProviderIdentityFromListing(l);
+          const key=p.providerId+'|'+(p.listingId||'');
           if(seen.has(key)) return;
           seen.add(key);
+          result.push(p);
+      });
+
+    db.machines
+      .filter(m=>m.services && m.services[request.service]!==undefined)
+      .forEach(m=>{
+          const ownerUser=db.users.find(u=>u.name===m.owner);
+          const providerId=ownerUser?.id || ('machine-owner:'+m.owner);
+          if(providerId===request.userId) return;
+          // Keep providers with pending send in the list (button toggles to cancel).
+          const machineKey='machine:'+m.id;
+          if(seen.has(providerId+'|'+machineKey)) return;
+          if(start && hasProviderBookingConflict(providerId, machineKey, start, end)) return;
+          seen.add(providerId+'|'+machineKey);
           result.push({
-              providerId:need.userId,
-              provider:need.requesterName || db.users.find(u=>String(u.id)===String(need.userId))?.name || 'درخواست‌دهنده',
-              machineId:null,
+              providerId,
+              provider:m.owner || ownerUser?.name || 'ارائه‌دهنده',
+              machineId:m.id,
               listingId:null,
               service:request.service,
-              unitPrice:price,
-              priceUnit:priceUnit,
-              rating:null,
-              location:need.data?.serviceLocationLabel || (need.data?.serviceLocation && typeof need.data.serviceLocation.lat==='number' ? nearestCityFromCoords(need.data.serviceLocation.lat,need.data.serviceLocation.lng) : '') || request.data?.city || '',
-              targetRequestId:need.id,
-              offerKey:String(need.userId)+'|'+String(need.id),
-              data:{...(need.data||{}), price:price, priceUnit:priceUnit, requestId:need.id, requestKind:'need', sourceRequestId:request.id}
+              unitPrice:Number(m.services[request.service])||0,
+              priceUnit:'تومان / هکتار',
+              rating:Number(m.rating)||4.5,
+              location:m.location || '—',
+              data:{price:Number(m.services[request.service])||0,priceUnit:'تومان / هکتار'}
           });
       });
+
     return result;
 }
 function hasProviderBookingConflict(providerId, machineId, start, end){
@@ -3761,21 +3734,22 @@ async function cancelRecipient(recipientId, requestId){
     showToast('ارسال لغو شد','success');
     openRequestOffersMap(requestId);
 }
-async function sendRequestToProvider(providerId, requestId, targetRequestId){
+async function sendRequestToProvider(providerId, requestId){
     window.__keloSending = window.__keloSending || {};
-    const _targetId = targetRequestId || requestId;
-    const _sendKey = String(requestId)+':'+String(_targetId)+':'+String(providerId);
+    const _sendKey = String(requestId)+':'+String(providerId);
     if(window.__keloSending[_sendKey]) return;
     window.__keloSending[_sendKey] = true;
-    try{ return await sendRequestToProviderInner(providerId, requestId, _targetId); }
+    try{ return await sendRequestToProviderInner(providerId, requestId); }
     finally{
         delete window.__keloSending[_sendKey];
-        const _offerKey = String(providerId)+'|'+String(_targetId);
-        const _b = document.querySelector('.request-offers-list-item[data-offer-id="'+_offerKey.replace(/"/g,'')+'"] .offer-item-btn');
+        // If the send failed (or bailed out early) the sheet was not re-rendered:
+        // put the button back so the user can try again.
+        const _b = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
         if(_b && _b.dataset && _b.dataset.origText && _b.disabled){ _b.disabled = false; _b.textContent = _b.dataset.origText; }
     }
 }
 function sendOfferPeerLabel(request){
+    // provide = ماشین‌دار برای کشاورز می‌فرستد؛ need = کشاورز برای ماشین‌دار
     if(request && request.requestKind === 'provide') return 'کشاورز';
     return 'ماشین‌دار';
 }
@@ -3793,73 +3767,74 @@ function sendOfferUnavailableToast(request){
 function sendOfferMapHeader(request){
     return request && request.requestKind === 'provide' ? 'کشاورزان' : 'ارائه‌دهندگان خدمت';
 }
-async function sendRequestToProviderInner(providerId, requestId, targetRequestId){
-    const _targetId = targetRequestId || requestId;
-    const _offerKey = String(providerId)+'|'+String(_targetId);
-    const _btn = document.querySelector('.request-offers-list-item[data-offer-id="'+_offerKey.replace(/"/g,'')+'"] .offer-item-btn');
+async function sendRequestToProviderInner(providerId, requestId){
+    const _btn = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
     if(_btn){ _btn.dataset.origText = _btn.textContent; _btn.disabled = true; _btn.textContent = 'در حال ارسال…'; }
-    const request=db.requests.find(r=>String(r.id)===String(requestId) && r.userId===currentUser.id);
+    const request=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
     if(!request){ showToast('درخواست پیدا نشد','error'); return; }
-    if(['accepted','in_progress','completed','cancelled','expired'].includes(request.status)){
+    if(request.status==='accepted' || request.status==='in_progress' || request.status==='completed' || request.status==='cancelled' || request.status==='expired'){
         showToast('این درخواست قبلاً توافق شده است','error'); return;
     }
 
-    const effectiveRequest = request.requestKind === 'provide'
-        ? db.requests.find(r=>String(r.id)===String(_targetId) && r.requestKind==='need' && r.userId===providerId)
-        : request;
-    if(!effectiveRequest){ showToast('درخواست نیازِ متناظر پیدا نشد','error'); return; }
-    if(['accepted','in_progress','completed','cancelled','expired'].includes(effectiveRequest.status)){
-        showToast('این درخواست دیگر قابل پیشنهاد نیست','error'); return;
+    // Mirrors Server: when anchor is a 'provide' ad, date/area/total come from
+    // the other party's own 'need' request when available.
+    let effectiveRequest = request;
+    if(request.requestKind === 'provide'){
+        const farmerReq = db.requests
+            .filter(r => r.userId===providerId && r.requestKind==='need' && r.service===request.service
+                && r.status!=='cancelled' && r.status!=='completed' && r.status!=='expired')
+            .sort((a,b) => new Date(b.createdAt||b.created||0) - new Date(a.createdAt||a.created||0))[0];
+        if(farmerReq) effectiveRequest = farmerReq;
     }
 
-    // The active-proposal rule is scoped to the exact target request only.
-    if(hasActiveProposalForRequest(effectiveRequest.id, request.userId, providerId)){
+    // id لنگر UI + id مؤثر (need) — هر دو برای جلوگیری از پیشنهاد تکراری
+    const anchorIds = {};
+    anchorIds[String(request.id)] = true;
+    anchorIds[String(effectiveRequest.id)] = true;
+
+    if(hasActiveProposalForRequest(requestId, request.userId, providerId) ||
+       hasActiveProposalForRequest(effectiveRequest.id, request.userId, providerId)){
         showToast('در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد','error');
         return;
     }
     const already = db.requestRecipients.some(function(x){
-        if(String(x.requestId)!==String(effectiveRequest.id)) return false;
         if(!['pending','accepted'].includes(x.status)) return false;
-        const p=String(x.proposerId||'');
-        const r=String(x.recipientId||x.providerId||'');
-        return (p===String(currentUser.id)&&r===String(providerId)) || (p===String(providerId)&&r===String(currentUser.id));
+        if(!anchorIds[String(x.requestId)]) return false;
+        const other = String(x.recipientId || x.providerId || '');
+        const prop = String(x.proposerId || '');
+        const target = String(providerId);
+        const me = String(currentUser.id);
+        // همان گیرنده، یا همان جفت proposer/recipient
+        if(other === target) return true;
+        if(prop && other && ((prop === me && other === target) || (prop === target && other === me))) return true;
+        return false;
     });
-    if(already){ showToast(sendOfferAlreadyToast(request),'error'); return; }
+    if(already){
+        showToast(sendOfferAlreadyToast(request),'error'); return;
+    }
 
-    let candidate = getEligibleProvidersForRequest(request).find(x=>
-        String(x.providerId)===String(providerId) && String(x.targetRequestId||request.id)===String(_targetId)
-    );
+    const candidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===providerId)||{providerId:providerId,listingId:null,machineId:null,unitPrice:0,priceUnit:"",location:"",rating:null,data:{}};
     if(!candidate){ showToast(sendOfferUnavailableToast(request),'error'); return; }
-
     if(window.KeloBackend && window.KeloBackend.isServerMode()){
         try{
-            const payload={
-                providerId:providerId,
-                recipientId:providerId,
-                machineId:candidate.machineId||null,
-                listingId:candidate.listingId||null,
-                unitPrice:candidate.unitPrice,
-                priceUnit:candidate.priceUnit,
-                location:candidate.location,
-                targetRequestId:_targetId
-            };
-            payload.sourceRequestId=request.id; applyServerSnapshot(await window.KeloBackend.sendRecipient(effectiveRequest.id, payload));
+            applyServerSnapshot(await window.KeloBackend.sendRecipient(requestId,{providerId:providerId,machineId:null,listingId:candidate.listingId||null,unitPrice:candidate.unitPrice,priceUnit:candidate.priceUnit,location:candidate.location}));
             showToast(sendOfferSuccessToast(request),'success'); openRequestOffersMap(requestId); updateMobileHeader(sendOfferMapHeader(request));
         }catch(err){showToast((err&&err.body&&err.body.error)||'ارسال درخواست انجام نشد.','error');}
         return;
     }
 
+    // مثل Server: request_id مؤثر، proposer=من، recipient=طرف مقابل، provider_id=گیرنده
     const recipient={
         id:'rr'+Date.now()+Math.random().toString(36).slice(2,7),
         requestId:effectiveRequest.id,
-        anchorRequestId:request.requestKind==='provide' ? request.id : null,
+        anchorRequestId:request.id,
         proposerId:currentUser.id,
         recipientId:candidate.providerId,
         providerId:candidate.providerId,
         provider:candidate.provider,
         machineId:candidate.machineId,
         listingId:candidate.listingId || null,
-        service:effectiveRequest.service,
+        service:request.service,
         unitPrice:candidate.unitPrice,
         priceUnit:candidate.priceUnit,
         total:calculateTotal(effectiveRequest,candidate.data,candidate.unitPrice),
@@ -3876,7 +3851,6 @@ async function sendRequestToProviderInner(providerId, requestId, targetRequestId
     openRequestOffersMap(request.id);
     updateMobileHeader(sendOfferMapHeader(request));
 }
-
 function providerHasUnfinishedDeal(providerId){
     return db.deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
 }
@@ -3944,10 +3918,6 @@ async function acceptOffer(id){
         x.status='closed'; x.closedAt=new Date().toISOString();
     });
     request.status='accepted';
-    if(recipient.anchorRequestId){
-        const sourceReq=db.requests.find(r=>String(r.id)===String(recipient.anchorRequestId));
-        if(sourceReq && sourceReq.status!=='completed' && sourceReq.status!=='cancelled') sourceReq.status='accepted';
-    }
 
     const existingDeal=db.deals.find(d=>d.requestId===request.id && d.status!=='cancelled');
     if(existingDeal){
@@ -4068,7 +4038,7 @@ function renderAdmin(){
 function serviceName(service){ return SERVICE_DEFS[service]?.name || service || '—'; }
 function formatMoney(value){ return fmtNum(Number(value)||0)+' تومان'; }
 function requestDate(r){ const start = r?.data?.dateStart || r?.data?.date; const end = r?.data?.dateEnd; if(start) return formatDealRangeDate(start, end || start); return '—'; }
-function requestAmount(r){ return r?.data?.area ? toPersianDigits(r.data.area)+' هکتار' : ''; }
+function requestAmount(r){ if(r?.data?.area) return toPersianDigits(r.data.area)+' هکتار'; return '—'; }
 const driveImageMap={"harvest.jpg":"https://cdn.imgurl.ir/uploads/c669299_harvest.jpg","pickup.jpg":"https://cdn.imgurl.ir/uploads/b00687_pickup.jpg","spray.jpg":"https://cdn.imgurl.ir/uploads/a133_spray.jpg","tractor.jpg":"https://cdn.imgurl.ir/uploads/f75498_tractor.jpg","transplant.jpg":"https://cdn.imgurl.ir/uploads/g9655_transant.jpg"};
 
 document.addEventListener('keydown', function(e){
@@ -4090,43 +4060,41 @@ document.addEventListener('DOMContentLoaded', async function(){
     try{
         await window.KeloBackend.init();
 
-        if(window.KeloBackend.isServerMode()){
-            const serverUser = await window.KeloBackend.me();
+        // Phase 1 — بازیابی session از طریق Auth Service
+        const authApi = window.KeloService && window.KeloService.auth;
+        if (!authApi) {
             const preStyle = document.getElementById('keloPreloadHideLanding');
-            if(preStyle) preStyle.remove();
-            if(serverUser){
-                enterAuthenticatedUser(serverUser,{render:false});
-                await refreshServerSnapshot(false);
-                if(!currentUser.profileCompleted) showCompleteProfile();
-                else renderApp();
-            }else{
-                const landing=document.getElementById('landing');
-                const app=document.getElementById('app');
-                if(app) app.classList.add('hidden');
-                if(landing) landing.classList.remove('hidden');
+            if (preStyle) preStyle.remove();
+            showToast('سرویس ورود کِلو بارگذاری نشد.','error');
+            return;
+        }
+
+        const restored = await authApi.restoreSession();
+        const preStyle = document.getElementById('keloPreloadHideLanding');
+        if (preStyle) preStyle.remove();
+
+        if (!restored || !restored.ok) {
+            if (restored && restored.code === 'SERVER_UNAVAILABLE') {
+                showToast(restored.message || 'سرویس داده کِلو در دسترس نیست.','error');
             }
             return;
         }
 
-        if(window.KeloBackend.isServerError()){
-            const preStyle = document.getElementById('keloPreloadHideLanding');
-            if(preStyle) preStyle.remove();
-            showToast('سرویس داده کِلو در دسترس نیست.','error');
-            return;
-        }
+        const user = restored.data && restored.data.user;
+        const mode = (restored.data && restored.data.mode) || (window.KeloService.mode && window.KeloService.mode());
 
-        const savedId = localStorage.getItem(SESSION_KEY);
-        if(savedId){
-            const u = db.users.find(x => x.id === savedId);
-            if(u){
-                enterAuthenticatedUser(u);
-            } else {
-                const preStyle = document.getElementById('keloPreloadHideLanding');
-                if(preStyle) preStyle.remove();
+        if (user) {
+            enterAuthenticatedUser(user, { render: false });
+            if (mode === 'server') {
+                try { await refreshServerSnapshot(false); } catch (err) { console.warn('kelo snapshot on boot:', err); }
             }
+            if (!currentUser.profileCompleted) showCompleteProfile();
+            else renderApp();
         } else {
-            const preStyle = document.getElementById('keloPreloadHideLanding');
-            if(preStyle) preStyle.remove();
+            const landing = document.getElementById('landing');
+            const app = document.getElementById('app');
+            if (app) app.classList.add('hidden');
+            if (landing) landing.classList.remove('hidden');
         }
     }catch(e){
         const preStyle = document.getElementById('keloPreloadHideLanding');

@@ -61,3 +61,24 @@ Browser
 ```
 
 پذیرش درخواست با قفل سطری روی Request و Transaction سمت PostgreSQL انجام می‌شود تا دو ارائه‌دهنده نتوانند یک درخواست را همزمان قبول کنند.
+
+---
+
+## Frontend layered architecture (from Phase 0)
+
+```text
+UI (app.js / pages / sheets)
+        │
+        ▼
+KeloService  (services/*)
+        │
+   ┌────┴────┐
+   ▼         ▼
+LocalAdapter  ApiAdapter
+   │         │
+ local DB   KeloBackend → REST API
+```
+
+Phase 0 only introduces the skeleton (`core/`, `adapters/` stubs, `services/kelo-service.js`).
+Baseline for this refactor: **Kelo36-CG2**.
+Domain migration starts at Phase 1 (Auth).

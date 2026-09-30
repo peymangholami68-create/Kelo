@@ -13,23 +13,6 @@ function asNumber(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function activityAreaMatchesLocation(activityArea, locationLabel) {
-  if (!Array.isArray(activityArea) || !activityArea.length) return true;
-  const label = String(locationLabel || '').trim();
-  if (!label) return true;
-  const norm = v => String(v || '').trim().replace(/\s+/g, '');
-  const hay = norm(label);
-  for (const row of activityArea) {
-    const province = norm(row?.province);
-    if (row?.all || !Array.isArray(row?.cities) || row.cities.length === 0) {
-      if (!province || hay.includes(province)) return true;
-    } else if (row.cities.some(c => hay.includes(norm(c)))) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function servicePayload(row) {
   return {
     id: row.id,
@@ -124,9 +107,6 @@ function mapRecipient(row) {
   return {
     id: row.id,
     requestId: row.request_id,
-    anchorRequestId: row.anchor_request_id || null,
-    sourceRequestId: row.anchor_request_id || null,
-    targetRequestId: row.request_id,
     providerId: row.recipient_id || row.provider_id,
     provider: row.proposer_name || row.provider_name || '',
     proposerId: row.proposer_id || row.requester_id || null,
@@ -313,7 +293,7 @@ router.patch('/requests/:id', auth, async (req,res,next)=>{
     await client.query('begin');
     await client.query(`update requests set service_type_id=$1,area_ha=$2,date_start=$3,date_end=$4,service_location=$5::jsonb,service_location_label=$6,data=$7::jsonb,note=$8,status='pending' where id=$9`,[serviceId,data.area?asNumber(data.area):null,data.dateStart||data.date,data.dateEnd||null,data.serviceLocation?JSON.stringify(data.serviceLocation):null,data.serviceLocationLabel||null,JSON.stringify(data),data.note||'',req.params.id]);
     // بعد از ویرایش همه پیشنهادهای قبلی پاک شوند (مثل Local)
-    await client.query(`update request_recipients set status='closed', closed_at=now() where (request_id=$1 or anchor_request_id=$1) and status in ('pending','accepted')`,[req.params.id]);
+    await client.query('delete from request_recipients where request_id=$1',[req.params.id]);
     await client.query('commit');
     res.json({ok:true,data:await getSnapshot(req.session.userId)});
   }catch(e){try{await client.query('rollback')}catch(_){} next(e)}finally{client.release()}
@@ -326,7 +306,7 @@ router.delete('/requests/:id', auth, async (req,res,next)=>{
     const r=await client.query(`update requests set status='cancelled', updated_at=now() where id=$1 and requester_id=$2 and status not in ('accepted','in_progress','completed','cancelled') returning id`,[req.params.id,req.session.userId]);
     if(!r.rowCount){await client.query('rollback');return res.status(404).json({ok:false,error:'درخواست پیدا نشد یا قابل حذف نیست.'});}
     // Keep the request for history (soft delete) and close any still-active proposals.
-    await client.query(`update request_recipients set status='closed', closed_at=now() where (request_id=$1 or anchor_request_id=$1) and status in ('pending','accepted')`,[req.params.id]);
+    await client.query(`update request_recipients set status='closed', closed_at=now() where request_id=$1 and status in ('pending','accepted')`,[req.params.id]);
     await client.query('commit');
     res.json({ok:true,data:await getSnapshot(req.session.userId)});
   }catch(e){try{await client.query('rollback')}catch(_){} next(e)}finally{client.release()}
@@ -345,127 +325,85 @@ router.patch('/listings/:id', auth, async(req,res,next)=>{try{const body=req.bod
 router.delete('/listings/:id',auth,async(req,res,next)=>{try{const r=await pool.query(`update service_listings set status='blocked' where id=$1 and provider_id=$2 returning id`,[req.params.id,req.session.userId]);if(!r.rowCount)return res.status(404).json({ok:false,error:'خدمت پیدا نشد.'});res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}});
 
 router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
-  const r=await pool.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 and r.requester_id=$2`,[req.params.id,req.session.userId]);
+  const r=await pool.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1`,[req.params.id]);
   if(!r.rows[0]) return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});
   const request=r.rows[0];
   const out=[];
-
+  // Do not hide providers who already have a pending/accepted proposal on this
+  // request — the farmer sheet needs them visible so the button can toggle to
+  // «لغو ارسال». Duplicate-send is still blocked on POST /recipients.
   if(request.request_kind==='need'){
-    // Need -> active service listings only. A "provide" request is not mixed
-    // into this side of the matching model.
     const listings=await pool.query(`select l.id listing_id,l.provider_id,l.machine_id,l.machine_type,l.capacity,l.price,l.price_unit,l.activity_area,l.location_label,l.availability_start,l.availability_end,l.data listing_data,p.full_name provider_name,s.slug service_slug
       from service_listings l join service_types s on s.id=l.service_type_id left join profiles p on p.user_id=l.provider_id
       where l.status='active' and l.provider_id<>$1 and l.service_type_id=$2
         and (l.availability_start is null or l.availability_start <= $3)
         and (l.availability_end is null or l.availability_end >= coalesce($4,$3))
-        and not exists (
-          select 1 from bookings b
-          where b.provider_id=l.provider_id
-            and b.status in ('confirmed','in_progress')
-            and daterange(b.start_date,b.end_date,'[]') && daterange($3,coalesce($4,$3),'[]')
-            and (l.machine_id is null or b.machine_id=l.machine_id)
-        )
       order by l.price asc,l.created_at desc`,[request.requester_id,request.service_type_id,request.date_start,request.date_end]);
-    listings.rows.forEach(x=>{ out.push({providerId:x.provider_id,provider:x.provider_name||'ارائه‌دهنده',machineId:x.machine_id,listingId:x.listing_id,service:x.service_slug,unitPrice:Number(x.price),priceUnit:x.price_unit,rating:null,location:x.location_label||'',targetRequestId:request.id,offerKey:String(x.provider_id)+'|'+String(request.id),data:Object.assign({}, x.listing_data||{}, {machineType:x.machine_type||'',capacity:x.capacity||'',price:Number(x.price),priceUnit:x.price_unit,activityArea:x.activity_area||[],dateStart:x.availability_start,dateEnd:x.availability_end})}); });
-  }else{
-    // Provide -> specific active need requests. The target request id is
-    // returned explicitly; there is no "latest need" fallback.
-    const needs=await pool.query(`select r.id request_id,r.requester_id,p.full_name requester_name,s.slug service_slug,r.data,r.area_ha,r.date_start,r.date_end,r.service_location,r.service_location_label
+    listings.rows.forEach(x=>{ out.push({providerId:x.provider_id,provider:x.provider_name||'ارائه‌دهنده',machineId:x.machine_id,listingId:x.listing_id,service:x.service_slug,unitPrice:Number(x.price),priceUnit:x.price_unit,rating:null,location:x.location_label||'',data:Object.assign({}, x.listing_data||{}, {machineType:x.machine_type||'',capacity:x.capacity||'',price:Number(x.price),priceUnit:x.price_unit,activityArea:x.activity_area||[],dateStart:x.availability_start,dateEnd:x.availability_end})}); });
+    const provides=await pool.query(`select r.id request_id,r.requester_id,p.full_name requester_name,s.slug service_slug,r.data,r.area_ha,r.date_start,r.date_end,r.service_location_label
       from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
-      where r.request_kind='need' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2
-        and (r.date_start >= $3)
-        and (coalesce(r.date_end,r.date_start) <= coalesce($4,$3))
-        and not exists (
-          select 1 from bookings b
-          where b.provider_id=$1
-            and b.status in ('confirmed','in_progress')
-            and daterange(b.start_date,b.end_date,'[]') && daterange(r.date_start,coalesce(r.date_end,r.date_start),'[]')
-        )
-      order by r.created_at desc`,[request.requester_id,request.service_type_id,request.date_start,request.date_end]);
-    needs.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:Number(request.data?.price||0),priceUnit:request.data?.priceUnit||'',rating:null,location:x.service_location_label||'',targetRequestId:x.request_id,offerKey:String(x.requester_id)+'|'+String(x.request_id),data:{...(x.data||{}),area:x.area_ha==null?undefined:Number(x.area_ha),dateStart:x.date_start,dateEnd:x.date_end,serviceLocation:x.service_location||undefined,serviceLocationLabel:x.service_location_label||undefined,requestId:x.request_id,requestKind:'need',sourceRequestId:request.id,providerPrice:Number(request.data?.price||0),providerPriceUnit:request.data?.priceUnit||''}}); });
+      where r.request_kind='provide' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
+    provides.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'ارائه‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:Number(x.data?.price||0),priceUnit:x.data?.priceUnit||'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'provide'}}); });
+  }else{
+    const needs=await pool.query(`select r.id request_id,r.requester_id,p.full_name requester_name,s.slug service_slug,r.data,r.area_ha,r.date_start,r.date_end,r.service_location_label
+      from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
+      where r.request_kind='need' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
+    needs.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:0,priceUnit:'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'need'}}); });
   }
   res.json({ok:true,providers:out});
 }catch(e){next(e)}});
 
-router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=await pool.connect();try{
-  const b=req.body||{};
-  const sourceResult=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 for update`,[req.params.id]);
-  if(!sourceResult.rows[0]) return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});
-  const sourceRequest=sourceResult.rows[0];
-  const proposerId=req.session.userId;
-  const recipientId=String(b.recipientId||b.providerId||'');
-  if(!recipientId)return res.status(400).json({ok:false,error:'گیرنده پیشنهاد مشخص نشده است.'});
-  if(recipientId===proposerId)return res.status(400).json({ok:false,error:'ارسال پیشنهاد به خودتان مجاز نیست.'});
-  if(String(sourceRequest.requester_id)!==String(proposerId)) return res.status(403).json({ok:false,error:'فقط صاحب درخواست می‌تواند از این درخواست پیشنهاد ارسال کند.'});
+router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=await pool.connect();try{const b=req.body||{};const r=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 for update`,[req.params.id]);if(!r.rows[0])return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});let request=r.rows[0];const proposerId=req.session.userId;const recipientId=String(b.recipientId||b.providerId||'');if(!recipientId)return res.status(400).json({ok:false,error:'گیرنده پیشنهاد مشخص نشده است.'});if(recipientId===proposerId)return res.status(400).json({ok:false,error:'ارسال پیشنهاد به خودتان مجاز نیست.'});
+    const isOwner=String(request.requester_id)===String(proposerId);
+    const listing=b.listingId ? (await client.query(`select l.*,s.slug service_slug from service_listings l join service_types s on s.id=l.service_type_id where l.id=$1 and l.provider_id=$2 and l.status='active'`,[b.listingId,proposerId])).rows[0] : null;
+    if(b.listingId && !listing)return res.status(400).json({ok:false,error:'خدمت انتخاب‌شده معتبر نیست.'});
+    if(!isOwner && !listing && request.request_kind==='need'){
+      const ownProvide=await client.query(`select id from requests where requester_id=$1 and request_kind='provide' and status not in ('cancelled','completed','expired') and service_type_id=$2 limit 1`,[proposerId,request.service_type_id]);
+      if(!ownProvide.rowCount)return res.status(403).json({ok:false,error:'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.'});
+    }
+    // Bug fix: when the anchor request is a 'provide' ad, its owner plays the
+    // provider role in the resulting deal (see accept_request_recipient),
+    // and the real farmer/customer is the OTHER side of this proposal. Date,
+    // area and status must come from THAT person's own 'need' request, not
+    // from the ad's general availability window — otherwise the total comes
+    // out 0 for هکتار/تن pricing (the ad has no area), the booking gets the
+    // owner's own date range instead of the farmer's, and the two sides'
+    // request cards end up with swapped active/inactive states.
+    if(request.request_kind === 'provide'){
+      const farmerUserId = isOwner ? recipientId : proposerId;
+      const farmerReq = await client.query(
+        `select r.*, s.slug service_slug from requests r join service_types s on s.id=r.service_type_id
+         where r.requester_id=$1 and r.request_kind='need' and r.service_type_id=$2
+           and r.status not in ('cancelled','completed','expired') order by r.created_at desc limit 1 for update`,
+        [farmerUserId, request.service_type_id]
+      );
+      // If the farmer has no formal 'need' request (they proposed straight
+      // to the ad without going through their own request first), there is
+      // no farmer-specific date/area anywhere yet to re-anchor to — fall
+      // back to the ad's own data, same as before this fix.
+      if(farmerReq.rows[0]) request = farmerReq.rows[0];
+    }
+    const existing=await client.query(`select id from request_recipients where request_id=$1 and proposer_id=$2 and recipient_id=$3 and status in ('pending','accepted')`,[request.id,proposerId,recipientId]);if(existing.rowCount)return res.status(409).json({ok:false,error:'این پیشنهاد قبلاً ارسال شده است.'});
+    const __reciprocal=await client.query("select id from request_recipients where request_id=$1 and status in ('pending','accepted') and ((proposer_id=$2 and recipient_id=$3) or (proposer_id=$3 and recipient_id=$2)) limit 1",[request.id,proposerId,recipientId]);if(__reciprocal.rowCount)return res.status(409).json({ok:false,error:'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
+    let unitPrice=listing?Number(listing.price):asNumber(b.unitPrice);
+    let priceUnit=listing?listing.price_unit:(b.priceUnit||'');
+    if(!listing){
+      let _provideRow = null;
+      const _tryProvide = async function(uid){
+        const r = await client.query(`select data from requests where requester_id=$1 and request_kind='provide' and status != 'cancelled' and service_type_id=$2 order by created_at desc limit 1`,[uid, request.service_type_id]);
+        return r.rows[0] || null;
+      };
+      _provideRow = await _tryProvide(proposerId);
+      if(!_provideRow) _provideRow = await _tryProvide(recipientId);
+      if(_provideRow){
+        unitPrice = asNumber(_provideRow.data?.price) || unitPrice;
+        priceUnit = String(_provideRow.data?.priceUnit || priceUnit || '');
+      }
+    }
+    const reqData=request.data||{};let total=unitPrice;if(String(priceUnit).includes('هکتار')){const _a=Number(request.area_ha)||Number(reqData.area)||0;total=unitPrice*_a;}else if(String(priceUnit).includes('تن')){const _m=Number(reqData.amount)||Number(reqData.area)||0;total=unitPrice*_m;}else if(String(priceUnit).includes('روز')){const _s=reqData.dateStart||reqData.date||request.date_start;const _e=reqData.dateEnd||reqData.dateStart||reqData.date||request.date_end;if(_s&&_e){const _sd=new Date(_s);const _ed=new Date(_e);if(!isNaN(_sd)&&!isNaN(_ed)){const _ms=24*60*60*1000;const _d=Math.floor((_ed.getTime()-_sd.getTime())/_ms)+1;total=unitPrice*Math.max(_d,1);}}}else if(String(priceUnit).includes('سرویس')){total=unitPrice;}
+    await client.query(`insert into request_recipients(request_id,proposer_id,recipient_id,provider_id,machine_id,listing_id,unit_price,price_unit,total,rating,location_label,status) values($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,'pending')`,[request.id,proposerId,recipientId,b.machineId||listing?.machine_id||null,b.listingId||null,unitPrice,priceUnit,total,listing?.rating||null,listing?.location_label||b.location||request.service_location_label||null]);
+    await client.query(`update requests set status='pending' where id=$1`,[request.id]);res.status(201).json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}finally{client.release()}});
 
-  let targetRequest=sourceRequest;
-  let anchorRequestId=null;
-  if(sourceRequest.request_kind==='provide'){
-    anchorRequestId=sourceRequest.id;
-    const targetId=String(b.targetRequestId||'');
-    if(!targetId) return res.status(400).json({ok:false,error:'درخواست نیازِ متناظر مشخص نشده است.'});
-    const q=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 and r.request_kind='need' and r.requester_id=$2 for update`,[targetId,recipientId]);
-    if(!q.rows[0]) return res.status(400).json({ok:false,error:'درخواست نیازِ متناظر معتبر نیست.'});
-    targetRequest=q.rows[0];
-    if(targetRequest.service_type_id!==sourceRequest.service_type_id) return res.status(400).json({ok:false,error:'خدمت دو درخواست یکسان نیست.'});
-    const srcEnd=sourceRequest.date_end||sourceRequest.date_start;
-    const tgtEnd=targetRequest.date_end||targetRequest.date_start;
-    if(targetRequest.date_start < sourceRequest.date_start || tgtEnd > srcEnd) return res.status(409).json({ok:false,error:'تاریخ درخواست نیاز با بازه ارائه خدمت همخوانی ندارد.'});
-  }else if(String(targetRequest.id)!==String(b.targetRequestId||targetRequest.id)){
-    return res.status(400).json({ok:false,error:'شناسه درخواست هدف معتبر نیست.'});
-  }
-
-  const listing=b.listingId ? (await client.query(`select l.*,s.slug service_slug from service_listings l join service_types s on s.id=l.service_type_id where l.id=$1 and l.provider_id=$2 and l.status='active'`,[b.listingId,proposerId])).rows[0] : null;
-  if(b.listingId && !listing)return res.status(400).json({ok:false,error:'خدمت انتخاب‌شده معتبر نیست.'});
-  if(sourceRequest.request_kind==='need' && listing){
-    const reqEnd=targetRequest.date_end||targetRequest.date_start;
-    const ls=listing.availability_start, le=listing.availability_end||listing.availability_start;
-    if(ls && ls>targetRequest.date_start) return res.status(409).json({ok:false,error:'بازه زمانی این خدمت با درخواست همخوانی ندارد.'});
-    if(le && le<reqEnd) return res.status(409).json({ok:false,error:'بازه زمانی این خدمت با درخواست همخوانی ندارد.'});
-    const busy=await client.query(`select 1 from bookings b where b.provider_id=$1 and b.status in ('confirmed','in_progress') and daterange(b.start_date,b.end_date,'[]') && daterange($2,coalesce($3,$2),'[]') and ($4::uuid is null or b.machine_id=$4) limit 1`,[proposerId,targetRequest.date_start,targetRequest.date_end,listing.machine_id||null]);
-    if(busy.rowCount) return res.status(409).json({ok:false,error:'این ماشین در این زمان دیگر در دسترس نیست.'});
-    if(!activityAreaMatchesLocation(listing.activity_area, targetRequest.service_location_label)) return res.status(409).json({ok:false,error:'محدوده فعالیت این ارائه‌دهنده با محل درخواست همخوانی ندارد.'});
-  }
-  if(sourceRequest.request_kind==='provide'){
-    const busy=await client.query(`select 1 from bookings b where b.provider_id=$1 and b.status in ('confirmed','in_progress') and daterange(b.start_date,b.end_date,'[]') && daterange($2,coalesce($3,$2),'[]') limit 1`,[proposerId,targetRequest.date_start,targetRequest.date_end]);
-    if(busy.rowCount) return res.status(409).json({ok:false,error:'این ارائه‌دهنده در این زمان دیگر در دسترس نیست.'});
-    if(!activityAreaMatchesLocation(sourceRequest.data?.activityArea, targetRequest.service_location_label)) return res.status(409).json({ok:false,error:'محدوده فعالیت این ارائه‌دهنده با محل درخواست همخوانی ندارد.'});
-  }
-
-  // For a need request, a non-owner proposer must have an active provide
-  // request/listing for the same service. For a provide anchor, ownership
-  // above already proves that the proposer is the provider.
-  if(!listing && sourceRequest.request_kind==='need'){
-    const ownProvide=await client.query(`select id from requests where requester_id=$1 and request_kind='provide' and status not in ('cancelled','completed','expired') and service_type_id=$2 limit 1`,[proposerId,targetRequest.service_type_id]);
-    if(!ownProvide.rowCount)return res.status(403).json({ok:false,error:'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.'});
-  }
-
-  const existing=await client.query(`select id from request_recipients where request_id=$1 and proposer_id=$2 and recipient_id=$3 and status in ('pending','accepted')`,[targetRequest.id,proposerId,recipientId]);
-  if(existing.rowCount)return res.status(409).json({ok:false,error:'این پیشنهاد قبلاً ارسال شده است.'});
-  const reciprocal=await client.query(`select id from request_recipients where request_id=$1 and status in ('pending','accepted') and ((proposer_id=$2 and recipient_id=$3) or (proposer_id=$3 and recipient_id=$2)) limit 1`,[targetRequest.id,proposerId,recipientId]);
-  if(reciprocal.rowCount)return res.status(409).json({ok:false,error:'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
-
-  let unitPrice=listing?Number(listing.price):asNumber(b.unitPrice);
-  let priceUnit=listing?listing.price_unit:(b.priceUnit||'');
-  if(sourceRequest.request_kind==='provide'){
-    unitPrice=asNumber(sourceRequest.data?.price)||unitPrice;
-    priceUnit=String(sourceRequest.data?.priceUnit||priceUnit||'');
-  }
-  const reqData=targetRequest.data||{};
-  let total=unitPrice;
-  if(String(priceUnit).includes('هکتار')) total=unitPrice*(Number(targetRequest.area_ha)||Number(reqData.area)||0);
-  else if(String(priceUnit).includes('تن')) total=unitPrice*(Number(reqData.amount)||Number(reqData.area)||0);
-  else if(String(priceUnit).includes('روز')){
-    const _s=reqData.dateStart||reqData.date||targetRequest.date_start;
-    const _e=reqData.dateEnd||reqData.dateStart||reqData.date||targetRequest.date_end;
-    if(_s&&_e){const _sd=new Date(_s),_ed=new Date(_e);if(!isNaN(_sd)&&!isNaN(_ed)) total=unitPrice*Math.max(Math.floor((_ed.getTime()-_sd.getTime())/(24*60*60*1000))+1,1);}
-  }else if(String(priceUnit).includes('سرویس')) total=unitPrice;
-
-  await client.query(`insert into request_recipients(request_id,anchor_request_id,proposer_id,recipient_id,provider_id,machine_id,listing_id,unit_price,price_unit,total,rating,location_label,status) values($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,'pending')`,[targetRequest.id,anchorRequestId,proposerId,recipientId,b.machineId||listing?.machine_id||null,b.listingId||null,unitPrice,priceUnit,total,listing?.rating||null,listing?.location_label||b.location||targetRequest.service_location_label||null]);
-  await client.query(`update requests set status='pending' where id=$1`,[targetRequest.id]);
-  if(anchorRequestId) await client.query(`update requests set status='pending' where id=$1`,[anchorRequestId]);
-  res.status(201).json({ok:true,data:await getSnapshot(req.session.userId)});
-}catch(e){next(e)}finally{client.release()}});
 
 router.delete('/request-recipients/:id', auth, async(req,res,next)=>{
   try{

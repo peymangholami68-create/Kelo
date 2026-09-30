@@ -82,9 +82,11 @@ app.use('/api', marketplaceRoutes);
 // factor alongside phone — without a limit here, it is brute-forceable.
 // Keyed by IP by default; if the app sits behind a shared NAT/proxy for many
 // users, consider keying by phone+IP together instead.
+// Production: 5 attempts / 15 min (anti brute-force on national ID).
+// Development: higher limit so local testing does not trip 429 quickly.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: IS_PROD ? 5 : 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً چند دقیقه دیگر دوباره امتحان کنید.' }
@@ -266,7 +268,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     if (userRow) {
       if (!verifyNationalId(nationalId, userRow.national_id_verifier)) {
-        return res.status(401).json({ error: 'این شماره همراه قبلاً با کد ملی دیگری ثبت شده است.' });
+        return res.status(401).json({ error: 'اطلاعات ورود صحیح نیست.' });
       }
       if (authMode === 'admin' && !userRow.system_roles.includes('admin')) {
         return res.status(401).json({ error: 'اطلاعات ورود مدیر صحیح نیست.' });
