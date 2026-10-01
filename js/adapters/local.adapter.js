@@ -200,17 +200,457 @@
     saveFirstProfile: function (data) {
       return this.saveProfile(data);
     },
-    createRequest: function () { return notImplemented('createRequest'); },
-    updateRequest: function () { return notImplemented('updateRequest'); },
-    deleteRequest: function () { return notImplemented('deleteRequest'); },
-    getRequest: function () { return notImplemented('getRequest'); },
-    sendProposal: function () { return notImplemented('sendProposal'); },
-    acceptProposal: function () { return notImplemented('acceptProposal'); },
-    rejectProposal: function () { return notImplemented('rejectProposal'); },
-    cancelProposal: function () { return notImplemented('cancelProposal'); },
-    cancelDeal: function () { return notImplemented('cancelDeal'); },
-    completeDeal: function () { return notImplemented('completeDeal'); },
-    payDeal: function () { return notImplemented('payDeal'); }
+    createRequest: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var request = {
+        id: 'r' + Date.now() + Math.random().toString(36).slice(2, 6),
+        userId: p.userId,
+        requesterName: p.requesterName || '',
+        requestKind: p.requestKind === 'provide' ? 'provide' : 'need',
+        service: p.service,
+        data: p.data || {},
+        status: 'pending',
+        created: new Date().toISOString()
+      };
+      db.requests = db.requests || [];
+      db.requests.push(request);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ id: request.id, request: request, kind: 'request' }, 'درخواست ثبت شد'));
+    },
+
+    updateRequest: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var request = (db.requests || []).find(function (r) {
+        return String(r.id) === String(p.id) && String(r.userId) === String(p.userId);
+      });
+      if (!request) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_NOT_FOUND, Errors.messageFor(Errors.CODES.REQUEST_NOT_FOUND)));
+      }
+      var locked = ['accepted', 'agreed', 'in_progress', 'completed', 'cancelled', 'expired'];
+      if (locked.indexOf(request.status) >= 0) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_INVALID_STATE, 'این درخواست دیگر قابل ویرایش نیست'));
+      }
+      request.service = p.service !== undefined ? p.service : request.service;
+      request.data = p.data !== undefined ? p.data : request.data;
+      if (p.requesterName) request.requesterName = p.requesterName;
+      request.updated = new Date().toISOString();
+      // بعد از ویرایش پیشنهادهای قبلی پاک شوند
+      db.requestRecipients = (db.requestRecipients || []).filter(function (x) {
+        return String(x.requestId) !== String(request.id);
+      });
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ id: request.id, request: request, kind: 'request' }, 'درخواست به‌روزرسانی شد'));
+    },
+
+    deleteRequest: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var request = (db.requests || []).find(function (r) {
+        return String(r.id) === String(p.id) && String(r.userId) === String(p.userId);
+      });
+      if (!request) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_NOT_FOUND, Errors.messageFor(Errors.CODES.REQUEST_NOT_FOUND)));
+      }
+      var locked = ['accepted', 'agreed', 'in_progress', 'completed'];
+      if (locked.indexOf(request.status) >= 0) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_INVALID_STATE, 'درخواست توافق‌شده قابل حذف نیست'));
+      }
+      request.status = 'cancelled';
+      (db.requestRecipients || []).forEach(function (x) {
+        if (String(x.requestId) === String(p.id) && (x.status === 'pending' || x.status === 'accepted')) {
+          x.status = 'closed';
+          x.closedAt = new Date().toISOString();
+        }
+      });
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ id: request.id, request: request }, 'درخواست حذف شد'));
+    },
+
+    getRequest: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var request = (db.requests || []).find(function (r) {
+        if (String(r.id) !== String(p.id)) return false;
+        if (p.userId != null && String(r.userId) !== String(p.userId)) return false;
+        return true;
+      });
+      if (!request) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_NOT_FOUND, Errors.messageFor(Errors.CODES.REQUEST_NOT_FOUND)));
+      }
+      return Promise.resolve(Result.ok({ request: request }));
+    },
+
+    createListing: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var listing = {
+        id: 'l' + Date.now() + Math.random().toString(36).slice(2, 6),
+        userId: p.userId,
+        providerName: p.providerName || '',
+        service: p.service,
+        data: p.data || {},
+        status: 'active',
+        created: new Date().toISOString()
+      };
+      db.listings = db.listings || [];
+      db.listings.push(listing);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ id: listing.id, listing: listing, kind: 'listing' }, 'آگهی ثبت شد'));
+    },
+    getMarketplaceSnapshot: function () {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      return Promise.resolve(Result.ok({
+        requests: db.requests || [],
+        listings: db.listings || [],
+        machines: db.machines || [],
+        users: db.users || [],
+        bookings: db.bookings || [],
+        requestRecipients: db.requestRecipients || [],
+        deals: db.deals || [],
+        reviews: db.reviews || []
+      }));
+    },
+
+    /**
+     * Persistence-only: apply a Domain planSend result.
+     */
+    applySendPlan: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var plan = (payload && payload.plan) || payload;
+      if (!plan || !plan.ok || !plan.recipient) {
+        return Promise.resolve(Result.fail(Errors.CODES.VALIDATION, (plan && plan.message) || 'plan نامعتبر است'));
+      }
+      db.requestRecipients = db.requestRecipients || [];
+      db.requestRecipients.push(plan.recipient);
+      var eff = (db.requests || []).find(function (r) { return String(r.id) === String(plan.effectiveRequestId); });
+      if (eff && eff.status !== 'completed') eff.status = 'pending';
+      var anchor = (db.requests || []).find(function (r) { return String(r.id) === String(plan.requestId); });
+      if (anchor && String(anchor.id) !== String(plan.effectiveRequestId) && anchor.status !== 'completed') {
+        anchor.status = 'pending';
+      }
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({
+        recipient: plan.recipient,
+        request: anchor || null
+      }, plan.successMessage || 'پیشنهاد ارسال شد'));
+    },
+
+    /** Compatibility: expects payload.plan from service orchestration */
+    sendProposal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      if (payload && payload.plan) return this.applySendPlan(payload);
+      return Promise.resolve(Result.fail(Errors.CODES.VALIDATION, 'ارسال باید از Service با plan انجام شود'));
+    },
+
+    /**
+     * Persistence-only: apply a Domain planAccept result.
+     */
+    applyAcceptPlan: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var plan = (payload && payload.plan) || payload;
+      var recipientId = payload && payload.recipientId;
+      if (!plan || !plan.ok) {
+        if (plan && plan.closeRecipient && recipientId) {
+          var recClose = (db.requestRecipients || []).find(function (x) { return String(x.id) === String(recipientId); });
+          if (recClose) {
+            recClose.status = 'closed';
+            if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+          }
+        }
+        return Promise.resolve(Result.fail(
+          (plan && plan.code) || Errors.CODES.PROPOSAL_ALREADY_HANDLED,
+          (plan && plan.message) || 'پذیرش مجاز نیست'
+        ));
+      }
+      var recipient = (db.requestRecipients || []).find(function (x) {
+        return String(x.id) === String(plan.recipientId || recipientId);
+      });
+      if (!recipient) {
+        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_NOT_FOUND, 'پیشنهاد پیدا نشد'));
+      }
+      var request = (db.requests || []).find(function (r) {
+        return String(r.id) === String(plan.requestId);
+      });
+      db.bookings = db.bookings || [];
+      db.bookings.push(plan.booking);
+      recipient.status = 'accepted';
+      recipient.respondedAt = new Date().toISOString();
+      (db.requestRecipients || []).forEach(function (x) {
+        if (String(x.requestId) === String(plan.requestId) && String(x.id) !== String(recipient.id) && x.status === 'pending') {
+          x.status = 'closed';
+          x.closedAt = new Date().toISOString();
+        }
+      });
+      if (request) request.status = 'accepted';
+      db.deals = db.deals || [];
+      db.deals.push(plan.deal);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({
+        deal: plan.deal,
+        booking: plan.booking,
+        recipient: recipient
+      }, plan.successMessage || 'کار با شما توافق شد'));
+    },
+
+    acceptProposal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      return this.applyAcceptPlan(payload);
+    },
+
+    rejectProposal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
+      var rec = (db.requestRecipients || []).find(function (x) { return String(x.id) === String(p.id); });
+      var gate = D.canReject ? D.canReject(rec, p.userId) : { ok: !!rec && rec.status === 'pending' };
+      if (!gate.ok) {
+        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد دیگر قابل رد نیست'));
+      }
+      rec.status = 'rejected';
+      rec.respondedAt = new Date().toISOString();
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ recipient: rec }, 'درخواست رد شد'));
+    },
+
+    cancelProposal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
+      var rec = (db.requestRecipients || []).find(function (x) { return String(x.id) === String(p.id); });
+      var gate = D.canCancel ? D.canCancel(rec, p.userId) : { ok: !!rec && rec.status === 'pending' };
+      if (!gate.ok) {
+        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد قابل لغو نیست'));
+      }
+      rec.status = 'closed';
+      rec.closedAt = new Date().toISOString();
+      rec.respondedAt = new Date().toISOString();
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ recipient: rec }, 'ارسال لغو شد'));
+    },
+
+    cancelDeal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var userId = String(p.userId || '');
+      var deal = (db.deals || []).find(function (x) {
+        return String(x.id) === String(p.id) &&
+          (String(x.userId) === userId || String(x.providerId) === userId) &&
+          x.status !== 'completed' && x.status !== 'cancelled' &&
+          x.paymentStatus !== 'paid';
+      });
+      if (!deal) {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای لغو پیدا نشد یا قابل لغو نیست.'));
+      }
+      deal.status = 'cancelled';
+      deal.cancelledAt = new Date().toISOString();
+      var booking = (db.bookings || []).find(function (b) { return String(b.id) === String(deal.bookingId); });
+      if (booking) booking.status = 'cancelled';
+      (db.requestRecipients || []).forEach(function (x) {
+        if (String(x.requestId) !== String(deal.requestId)) return;
+        if (x.status === 'accepted') {
+          x.status = 'closed';
+          x.closedAt = new Date().toISOString();
+        } else if (x.status === 'closed' && !x.respondedAt) {
+          x.status = 'pending';
+          x.closedAt = null;
+        }
+      });
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ deal: deal }, 'کار لغو شد'));
+    },
+
+    completeDeal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var userId = String(p.userId || '');
+      var deal = (db.deals || []).find(function (x) {
+        return String(x.id) === String(p.id) &&
+          String(x.providerId) === userId &&
+          x.status !== 'completed' && x.status !== 'cancelled';
+      });
+      if (!deal) {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای اتمام پیدا نشد یا مجاز نیستید.'));
+      }
+      deal.status = 'completed';
+      deal.completedAt = new Date().toISOString();
+      var req = (db.requests || []).find(function (r) { return String(r.id) === String(deal.requestId); });
+      if (req) req.status = 'completed';
+      var booking = (db.bookings || []).find(function (b) { return String(b.id) === String(deal.bookingId); });
+      if (booking) booking.status = 'completed';
+      var rec = (db.requestRecipients || []).find(function (x) {
+        return String(x.requestId) === String(deal.requestId) && x.status === 'accepted';
+      });
+      if (rec) rec.status = 'completed';
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ deal: deal }, 'اتمام کار ثبت شد'));
+    },
+    /**
+     * @param {{ id: string, userId: string, method?: 'cash'|'online'|'generic' }} payload
+     */
+    payDeal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var userId = String(p.userId || '');
+      var method = p.method || 'generic';
+      var deal = (db.deals || []).find(function (x) {
+        return String(x.id) === String(p.id) && String(x.userId) === userId;
+      });
+      if (!deal) {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای پرداخت پیدا نشد.'));
+      }
+      if (deal.status === 'cancelled') {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_INVALID_STATE, 'این معامله لغو شده است.'));
+      }
+      if (deal.paymentStatus === 'paid') {
+        return Promise.resolve(Result.ok({ deal: deal, alreadyPaid: true }, 'این توافق قبلاً پرداخت شده است'));
+      }
+      deal.paymentStatus = 'paid';
+      if (method === 'cash') deal.paymentMethod = 'cash';
+      else if (method === 'online') deal.paymentMethod = 'online';
+      if (deal.status === 'agreed') deal.status = 'paid';
+      var amount = Number(deal.total) || 0;
+      db.payments = db.payments || [];
+      db.payments.push({
+        id: 'p' + Date.now(),
+        dealId: deal.id,
+        userId: userId,
+        amount: amount,
+        method: method,
+        status: 'paid',
+        createdAt: new Date().toISOString()
+      });
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      var msg = method === 'cash' ? 'پرداخت نقدی ثبت شد' : 'پرداخت ثبت شد';
+      return Promise.resolve(Result.ok({ deal: deal }, msg));
+    },
+
+    createReview: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var userId = String(p.userId || '');
+      var deal = (db.deals || []).find(function (x) { return String(x.id) === String(p.dealId); });
+      if (!deal) {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'توافق پیدا نشد'));
+      }
+      var isFarmer = String(deal.userId) === userId;
+      var isProvider = String(deal.providerId) === userId;
+      if (!isFarmer && !isProvider) {
+        return Promise.resolve(Result.fail(Errors.CODES.FORBIDDEN, 'فقط طرفین توافق می‌توانند گزارش ثبت کنند'));
+      }
+      if (deal.status !== 'completed') {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_INVALID_STATE, 'فقط پس از تکمیل کار می‌توانید نظر ثبت کنید'));
+      }
+      db.reviews = db.reviews || [];
+      var already = db.reviews.some(function (r) {
+        return String(r.dealId) === String(p.dealId) && String(r.userId) === userId;
+      });
+      if (already) {
+        return Promise.resolve(Result.fail(Errors.CODES.CONFLICT, 'قبلاً برای این توافق گزارش ثبت کرده‌اید'));
+      }
+      var targetId = isFarmer ? deal.providerId : deal.userId;
+      var review = {
+        id: 'rv' + Date.now(),
+        dealId: p.dealId,
+        userId: userId,
+        targetId: targetId,
+        ratings: p.ratings || {},
+        note: p.note || '',
+        createdAt: new Date().toISOString()
+      };
+      db.reviews.push(review);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      try { localStorage.setItem('kelo_reviews', JSON.stringify(db.reviews)); } catch (e) {}
+      return Promise.resolve(Result.ok({ review: review }, 'گزارش شما ثبت شد'));
+    },
+
+    reportProblem: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var userId = String(p.userId || '');
+      var deal = (db.deals || []).find(function (x) { return String(x.id) === String(p.dealId); });
+      if (!deal) {
+        return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'توافق پیدا نشد'));
+      }
+      db.dealProblems = db.dealProblems || [];
+      var item = {
+        id: 'dp' + Date.now(),
+        dealId: p.dealId,
+        userId: userId,
+        role: String(deal.userId) === userId ? 'farmer' : 'provider',
+        reason: p.reason || '',
+        note: p.note || '',
+        createdAt: new Date().toISOString()
+      };
+      db.dealProblems.push(item);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ problem: item }, 'گزارش مشکل ثبت شد'));
+    },
+
+    getProviders: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var h = (dataAccess.helpers) || {};
+      var p = payload || {};
+      var req = (db.requests || []).find(function (r) { return String(r.id) === String(p.requestId); });
+      if (!req) {
+        return Promise.resolve(Result.fail(Errors.CODES.REQUEST_NOT_FOUND, 'درخواست پیدا نشد'));
+      }
+      var E = (global.KeloDomain && global.KeloDomain.eligibility) || {};
+      var candidates = [];
+      if (E.getEligibleProviders) {
+        candidates = E.getEligibleProviders({
+          request: req,
+          listings: db.listings || [],
+          machines: db.machines || [],
+          users: db.users || [],
+          bookings: db.bookings || [],
+          parseDate: h.parseStoredDate || (global.KeloDomain && global.KeloDomain.pricing && global.KeloDomain.pricing.parseIsoishDate),
+          geo: {
+            nearestCityFromCoords: h.nearestCityFromCoords || null,
+            provinceFromCity: h.provinceFromCity || null,
+            formatActivityArea: h.formatActivityArea || null
+          }
+        }) || [];
+      } else if (typeof h.getEligibleProvidersForRequest === 'function') {
+        candidates = h.getEligibleProvidersForRequest(req) || [];
+      }
+      return Promise.resolve(Result.ok({ providers: candidates, request: req }));
+    },
   };
 
   global.KeloLocalAdapter = LocalAdapter;

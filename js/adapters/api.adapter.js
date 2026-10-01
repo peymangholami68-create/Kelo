@@ -130,17 +130,226 @@
     saveFirstProfile: function (data) {
       return this.saveProfile(data);
     },
-    createRequest: function () { return notImplemented('createRequest'); },
-    updateRequest: function () { return notImplemented('updateRequest'); },
-    deleteRequest: function () { return notImplemented('deleteRequest'); },
-    getRequest: function () { return notImplemented('getRequest'); },
-    sendProposal: function () { return notImplemented('sendProposal'); },
-    acceptProposal: function () { return notImplemented('acceptProposal'); },
-    rejectProposal: function () { return notImplemented('rejectProposal'); },
-    cancelProposal: function () { return notImplemented('cancelProposal'); },
-    cancelDeal: function () { return notImplemented('cancelDeal'); },
-    completeDeal: function () { return notImplemented('completeDeal'); },
-    payDeal: function () { return notImplemented('payDeal'); }
+    createRequest: function (payload) {
+      var b = backend();
+      if (!b || typeof b.createRequest !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.createRequest(p.service, p.data, p.requestKind || 'need')
+        .then(function (result) {
+          return Result.ok({
+            id: result && result.id,
+            snapshot: result,
+            kind: 'request'
+          }, 'درخواست ثبت شد');
+        })
+        .catch(function (err) {
+          return Result.fromError(err, Errors.CODES.UNKNOWN, 'ذخیره اطلاعات روی سرور انجام نشد.');
+        });
+    },
+
+    updateRequest: function (payload) {
+      var b = backend();
+      if (!b || typeof b.updateRequest !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.updateRequest(p.id, p.service, p.data)
+        .then(function (result) {
+          return Result.ok({
+            id: (result && result.id) || p.id,
+            snapshot: result,
+            kind: 'request'
+          }, 'درخواست به‌روزرسانی شد');
+        })
+        .catch(function (err) {
+          return Result.fromError(err, Errors.CODES.REQUEST_INVALID_STATE, 'ذخیره اطلاعات روی سرور انجام نشد.');
+        });
+    },
+
+    deleteRequest: function (payload) {
+      var b = backend();
+      if (!b || typeof b.deleteRequest !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.deleteRequest(p.id)
+        .then(function (result) {
+          return Result.ok({ id: p.id, snapshot: result }, 'درخواست حذف شد');
+        })
+        .catch(function (err) {
+          return Result.fromError(err, Errors.CODES.UNKNOWN, 'حذف درخواست انجام نشد.');
+        });
+    },
+
+    getRequest: function (payload) {
+      // Server mode: request list lives in local mirror after bootstrap/snapshot.
+      // For now UI still hydrates edit from mirrored db via Local path when needed.
+      return Promise.resolve(Result.fail(Errors.CODES.NOT_IMPLEMENTED, 'ApiAdapter.getRequest از mirror محلی استفاده می‌شود.'));
+    },
+
+    createListing: function (payload) {
+      var b = backend();
+      if (!b || typeof b.createListing !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.createListing(p.service, p.data)
+        .then(function (result) {
+          return Result.ok({
+            id: result && result.id,
+            snapshot: result,
+            kind: 'listing'
+          }, 'آگهی ثبت شد');
+        })
+        .catch(function (err) {
+          return Result.fromError(err, Errors.CODES.UNKNOWN, 'ذخیره اطلاعات روی سرور انجام نشد.');
+        });
+    },
+    sendProposal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.sendRecipient !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.sendRecipient(p.requestId, {
+        providerId: p.providerId,
+        machineId: p.machineId != null ? p.machineId : null,
+        listingId: p.listingId || null,
+        unitPrice: p.unitPrice,
+        priceUnit: p.priceUnit,
+        location: p.location
+      }).then(function (result) {
+        return Result.ok({ snapshot: result }, 'پیشنهاد ارسال شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.PROPOSAL_NOT_ALLOWED, 'ارسال درخواست انجام نشد.');
+      });
+    },
+
+    acceptProposal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.acceptRecipient !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.acceptRecipient(p.id).then(function (result) {
+        return Result.ok({ snapshot: result }, 'کار با شما توافق شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.PROPOSAL_ALREADY_HANDLED, 'پذیرش درخواست انجام نشد.');
+      });
+    },
+
+    rejectProposal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.rejectRecipient !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.rejectRecipient(p.id).then(function (result) {
+        return Result.ok({ snapshot: result }, 'درخواست رد شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.PROPOSAL_ALREADY_HANDLED, 'رد درخواست انجام نشد.');
+      });
+    },
+
+    cancelProposal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.cancelRecipient !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.cancelRecipient(p.id).then(function (result) {
+        return Result.ok({ snapshot: result }, 'ارسال لغو شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.PROPOSAL_ALREADY_HANDLED, 'لغو ارسال انجام نشد.');
+      });
+    },
+    cancelDeal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.cancelDeal !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.cancelDeal(p.id).then(function (result) {
+        return Result.ok({ snapshot: result }, 'کار لغو شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.DEAL_INVALID_STATE, 'لغو کار انجام نشد.');
+      });
+    },
+
+    completeDeal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.completeDeal !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.completeDeal(p.id).then(function (result) {
+        return Result.ok({ snapshot: result }, 'اتمام کار ثبت شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.DEAL_INVALID_STATE, 'ثبت اتمام کار انجام نشد.');
+      });
+    },
+    payDeal: function (payload) {
+      var b = backend();
+      var p = payload || {};
+      var method = p.method || 'generic';
+      // Online gateway not wired yet — same product behavior as before.
+      if (method === 'online') {
+        return Promise.resolve(Result.fail(
+          Errors.CODES.NOT_IMPLEMENTED,
+          'پرداخت آنلاین به‌زودی متصل می‌شود.'
+        ));
+      }
+      if (!b || typeof b.payDeal !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      return b.payDeal(p.id).then(function (result) {
+        var msg = method === 'cash' ? 'پرداخت نقدی ثبت شد' : 'پرداخت ثبت شد';
+        return Result.ok({ snapshot: result }, msg);
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.PAYMENT_FAILED, 'ثبت پرداخت انجام نشد.');
+      });
+    },
+
+    createReview: function (payload) {
+      var b = backend();
+      if (!b || typeof b.createReview !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.createReview({
+        dealId: p.dealId,
+        ratings: p.ratings || {},
+        note: p.note || ''
+      }).then(function (result) {
+        return Result.ok({ snapshot: result }, 'گزارش شما ثبت شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'ثبت گزارش انجام نشد.');
+      });
+    },
+
+    reportProblem: function (payload) {
+      // No dedicated server endpoint yet — keep local-only behavior message.
+      return Promise.resolve(Result.fail(
+        Errors.CODES.NOT_IMPLEMENTED,
+        'ثبت گزارش مشکل روی سرور هنوز فعال نیست.'
+      ));
+    },
+
+    getProviders: function (payload) {
+      var b = backend();
+      if (!b || typeof b.getProviders !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.getProviders(p.requestId).then(function (result) {
+        var providers = (result && Array.isArray(result.providers)) ? result.providers : [];
+        return Result.ok({ providers: providers, snapshot: result });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'دریافت پیشنهادهای قابل ارسال انجام نشد.');
+      });
+    },
   };
 
   global.KeloApiAdapter = ApiAdapter;

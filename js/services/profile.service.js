@@ -14,11 +14,8 @@
     if (global.KeloService && typeof global.KeloService.adapter === 'function') {
       return global.KeloService.adapter();
     }
-    var backend = global.KeloBackend;
-    if (backend && typeof backend.isServerMode === 'function' && backend.isServerMode()) {
-      return global.KeloApiAdapter;
-    }
-    return global.KeloLocalAdapter;
+    // Fallback only if facade not loaded yet — never resolve transport mode here.
+    return global.KeloLocalAdapter || global.KeloApiAdapter || null;
   }
 
   function currentUserId() {

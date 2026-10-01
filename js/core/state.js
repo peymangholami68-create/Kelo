@@ -1,18 +1,14 @@
 /**
- * KELO — Shared app state (Phase 0)
+ * KELO — Shared app state (Phase 11)
  *
- * فقط نگهداری state مشترک. بدون Business Logic.
- * در فازهای بعدی، Serviceها از اینجا currentUser را می‌خوانند/می‌نویسند.
- *
- * توجه: در Phase 0 هنوز app.js مالک اصلی currentUser است.
- * این ماژول برای آماده‌سازی قرارداد و همگام‌سازی اختیاری است.
+ * منبع حقیقت برای currentUser و session mode.
  */
 (function (global) {
   'use strict';
 
   var _currentUser = null;
   var _session = {
-    mode: 'local', // 'local' | 'server' | 'server-error'
+    mode: 'local',
     ready: false
   };
   var _listeners = [];
@@ -32,10 +28,7 @@
   }
 
   function getSession() {
-    return {
-      mode: _session.mode,
-      ready: _session.ready
-    };
+    return { mode: _session.mode, ready: _session.ready };
   }
 
   function setSessionMode(mode, ready) {
@@ -59,22 +52,43 @@
 
   function _notify(event) {
     _listeners.forEach(function (fn) {
-      try { fn(event); } catch (e) { /* ignore listener errors */ }
+      try { fn(event); } catch (e) { /* ignore */ }
     });
   }
 
-  /**
-   * همگام‌سازی یک‌طرفه از متغیرهای legacy داخل app.js
-   * تا قبل از مهاجرت کامل Auth، state یکپارچه بماند.
-   */
   function syncFromLegacy(user, mode) {
-    if (user !== undefined) _currentUser = user || null;
-    if (mode) _session.mode = mode;
-    return {
-      currentUser: _currentUser,
-      session: getSession()
-    };
+    if (user !== undefined) setCurrentUser(user);
+    if (mode) setSessionMode(mode);
+    return { currentUser: _currentUser, session: getSession() };
   }
+
+  /**
+   * window.currentUser را به KeloState وصل می‌کند تا همه scriptهای کلاسیک
+   * یک منبع حقیقت داشته باشند.
+   */
+  function installWindowBridge() {
+    if (!global || typeof global.Object === 'undefined' || !global.Object.defineProperty) {
+      return;
+    }
+    try {
+      var existing = global.Object.getOwnPropertyDescriptor(global, 'currentUser');
+      if (existing && existing.get && existing.set) return;
+      global.Object.defineProperty(global, 'currentUser', {
+        configurable: true,
+        enumerable: true,
+        get: function () {
+          return _currentUser;
+        },
+        set: function (v) {
+          setCurrentUser(v);
+        }
+      });
+    } catch (e) {
+      try { global.currentUser = _currentUser; } catch (e2) {}
+    }
+  }
+
+  installWindowBridge();
 
   global.KeloState = {
     getCurrentUser: getCurrentUser,
@@ -84,6 +98,7 @@
     setSessionMode: setSessionMode,
     isAuthenticated: isAuthenticated,
     onChange: onChange,
-    syncFromLegacy: syncFromLegacy
+    syncFromLegacy: syncFromLegacy,
+    installWindowBridge: installWindowBridge
   };
 })(typeof window !== 'undefined' ? window : globalThis);

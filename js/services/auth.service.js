@@ -15,19 +15,18 @@
     if (global.KeloService && typeof global.KeloService.adapter === 'function') {
       return global.KeloService.adapter();
     }
-    var backend = global.KeloBackend;
-    if (backend && typeof backend.isServerMode === 'function' && backend.isServerMode()) {
-      return global.KeloApiAdapter;
-    }
-    return global.KeloLocalAdapter;
+    // Fallback only if facade not loaded yet — never resolve transport mode here.
+    return global.KeloLocalAdapter || global.KeloApiAdapter || null;
   }
 
   function getMode() {
     if (global.KeloService && typeof global.KeloService.mode === 'function') {
       return global.KeloService.mode();
     }
-    var backend = global.KeloBackend;
-    if (backend && typeof backend.getMode === 'function') return backend.getMode();
+    if (global.KeloState && typeof global.KeloState.getSession === 'function') {
+      var s = global.KeloState.getSession();
+      return (s && s.mode) || 'local';
+    }
     return 'local';
   }
 

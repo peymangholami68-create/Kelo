@@ -9,21 +9,30 @@
     window.addEventListener('resize', function(){ cancelAnimationFrame(raf); raf = requestAnimationFrame(syncViewport); });
 })();
 
+/**
+ * KELO app.js — Phase 8
+ *
+ * نقش این فایل بعد از مهاجرت Service/Adapter:
+ *   - UI rendering / navigation / sheets / maps
+ *   - event handlers که Service را صدا می‌زنند
+ *   - bootstrap و همگام‌سازی snapshot
+ *
+ * Business mutations باید از مسیر زیر بروند:
+ *   UI → KeloService.* → Domain → Adapter (Local | API)
+ *
+ * Phase 10: event handlers در js/ui/*.js بارگذاری می‌شوند.
+ * این فایل عمدتاً state مشترک، render، map و bootstrap را نگه می‌دارد.
+ */
+
+
+
 var KELO_BACK_CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 var KELO_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
-function showToast(message, type){
-    type = type || 'info';
-    let toast = document.getElementById('keloToast');
-    if(!toast){ toast = document.createElement('div'); toast.id = 'keloToast'; document.body.appendChild(toast); }
-    toast.className = 'kelo-toast ' + type + ' show';
-    toast.textContent = message;
-    clearTimeout(window._keloToastTimer);
-    window._keloToastTimer = setTimeout(function(){ toast.classList.remove('show'); }, 2800);
-}
-function fmtNum(n){ const num = Number(n) || 0; try { return new Intl.NumberFormat('fa-IR').format(num); } catch(e){ return String(num); } }
-function toPersianDigits(value){ return String(value??'').replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[Number(d)]); }
-function escapeHtml(value){ return String(value??'').replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+
+
+
+
 function toggleFaq(button){
     const faqItem = button.parentElement;
     const isActive = faqItem.classList.contains('active');
@@ -68,7 +77,7 @@ function saveWizardDraftDebounced(){ clearTimeout(_draftSaveTimer); _draftSaveTi
 function clearWizardDraft(){ if(!currentUser) return; try{ localStorage.removeItem(DRAFT_PREFIX + currentUser.id); }catch(e){} }
 function saveSession(){
     try{
-        if(window.KeloBackend && window.KeloBackend.isServerMode()){
+        if(window.KeloService && window.KeloService.mode && window.KeloService.mode() === 'server'){
             localStorage.removeItem(SESSION_KEY);
             return;
         }
@@ -193,7 +202,9 @@ function initializeDB(){
     return base;
 }
 let db=initializeDB();
-let currentUser=null;
+/* Phase 11: currentUser via window.KeloState bridge */
+if (window.KeloState && window.KeloState.installWindowBridge) window.KeloState.installWindowBridge();
+
 
 function upsertAuthenticatedUserMirror(user){
     if(!user || !user.id) return user;
@@ -227,11 +238,17 @@ function applyServerSnapshot(snapshot){
     db._serverSyncedAt=Date.now();
 }
 async function refreshServerSnapshot(render){
-    if(!(window.KeloBackend && window.KeloBackend.isServerMode())) return;
-    const result=await window.KeloBackend.bootstrap();
-    applyServerSnapshot(result);
+    if (window.KeloSync && typeof window.KeloSync.bootstrapSnapshot === 'function') {
+        const result = await window.KeloSync.bootstrapSnapshot();
+        if (!result) return;
+        applyServerSnapshot(result);
+    } else {
+        if (!(window.KeloService && window.KeloService.mode && window.KeloService.mode() === 'server')) return;
+        const result = await window.KeloBackend.bootstrap();
+        applyServerSnapshot(result);
+    }
     // اگر پروفایل کامل نیست، renderApp صفحه تکمیل پروفایل را پاک نکند
-    if(render && currentUser && currentUser.profileCompleted) renderApp();
+    if (render && currentUser && currentUser.profileCompleted) renderApp();
 }
 
 function enterAuthenticatedUser(user, options){
@@ -252,7 +269,7 @@ function enterAuthenticatedUser(user, options){
     } else if(options.render !== false){
         renderApp();
     }
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
+    if(window.KeloService && window.KeloService.mode && window.KeloService.mode() === 'server'){
         refreshServerSnapshot(true).catch(function(e){ console.warn('kelo snapshot:', e); });
     }
 }
@@ -304,14 +321,14 @@ function saveDB(){
         return false;
     }
 }
-function normalizeDigits(value){ return String(value||"").replace(/[۰-۹]/g,d=>String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).replace(/[٠-٩]/g,d=>String("٠١٢٣٤٥٦٧٨٩".indexOf(d))); }
+
 function normalizePhone(value){ let p=normalizeDigits(value).replace(/\s+/g,"").trim(); if(p.startsWith("+98"))p="0"+p.substring(3); else if(p.startsWith("98"))p="0"+p.substring(2); return p; }
 function normalizeNationalId(value){ return normalizeDigits(value).replace(/\D/g,"").trim(); }
-function showAuthError(message){ const box=document.getElementById("authError"); if(!box){ showToast(message,'error'); return; } box.textContent=message; box.style.display="block"; }
-function clearAuthError(){ const box=document.getElementById("authError"); if(box){ box.textContent=""; box.style.display="none"; } }
-function openLogin(){ authMode="public"; const modal=document.getElementById("loginModal"); if(modal) modal.classList.remove("hidden"); clearAuthError(); }
-function openAdminLogin(){ authMode="admin"; const modal=document.getElementById("loginModal"); if(modal) modal.classList.remove("hidden"); const title=modal ? modal.querySelector(".modal-head h2") : null; if(title) title.textContent="ورود مدیریت"; clearAuthError(); }
-function closeLogin(){ const modal=document.getElementById("loginModal"); if(modal) modal.classList.add("hidden"); const phone=document.getElementById("loginPhone"), nid=document.getElementById("loginNationalId"); if(phone)phone.value=""; if(nid)nid.value=""; clearAuthError(); }
+
+
+
+
+
 function ensureSystemRoles(user){ if(!user) return []; if(!Array.isArray(user.systemRoles)) user.systemRoles=[]; return user.systemRoles; }
 function isAdmin(user){ return !!user && ensureSystemRoles(user).includes("admin"); }
 
@@ -324,41 +341,15 @@ if (window.KeloLocalAdapter && typeof window.KeloLocalAdapter.bindDataAccess ===
         normalizeNationalId: function (v) { return normalizeNationalId(v); },
         isAdmin: function (u) { return isAdmin(u); }
     });
+// Cleanup C — Query layer reads through the same DB mirror
+if (window.KeloQueryService && typeof window.KeloQueryService.bindDataAccess === 'function') {
+    window.KeloQueryService.bindDataAccess({
+        getDB: function () { return db; }
+    });
 }
-async function login(e){
-    e.preventDefault(); clearAuthError();
-    const phone = (window.KeloService && window.KeloService.auth)
-        ? window.KeloService.auth.normalizePhone(document.getElementById("loginPhone").value)
-        : normalizePhone(document.getElementById("loginPhone").value);
-    const nationalId = (window.KeloService && window.KeloService.auth)
-        ? window.KeloService.auth.normalizeNationalId(document.getElementById("loginNationalId").value)
-        : normalizeNationalId(document.getElementById("loginNationalId").value);
 
-    const authApi = window.KeloService && window.KeloService.auth;
-    if (!authApi) {
-        showAuthError('سرویس ورود در دسترس نیست.');
-        return;
-    }
-
-    const result = await authApi.login({ phone: phone, nationalId: nationalId, authMode: authMode || 'public' });
-    if (!result || !result.ok) {
-        showAuthError((result && result.message) || 'ورود انجام نشد.');
-        return;
-    }
-
-    const user = result.data && result.data.user;
-    if (!user) {
-        showAuthError('ورود انجام نشد.');
-        return;
-    }
-
-    enterAuthenticatedUser(user, { created: !!(result.data && result.data.created), render: false });
-    if (window.KeloBackend && window.KeloBackend.isServerMode()) {
-        try { await refreshServerSnapshot(false); } catch (err) { console.warn('kelo snapshot after login:', err); }
-    }
-    if (!currentUser.profileCompleted) showCompleteProfile();
-    else renderApp();
 }
+
 async function adminLoginValues(phone, nationalId){
     // سازگاری با فراخوانی‌های قدیمی — مسیر اصلی login از KeloService.auth است
     authMode = 'admin';
@@ -372,138 +363,22 @@ async function adminLoginValues(phone, nationalId){
     const user = result.data && result.data.user;
     if (!user) { showAuthError('اطلاعات ورود مدیر صحیح نیست.'); return; }
     enterAuthenticatedUser(user, { render: false });
-    if (window.KeloBackend && window.KeloBackend.isServerMode()) {
+    if (window.KeloService && window.KeloService.mode && window.KeloService.mode() === 'server') {
         try { await refreshServerSnapshot(false); } catch (err) { console.warn('kelo snapshot after admin login:', err); }
     }
     if (!currentUser.profileCompleted) showCompleteProfile();
     else renderApp();
 }
-async function logout(){
-    try {
-        if (window.KeloService && window.KeloService.auth) {
-            await window.KeloService.auth.logout();
-        } else if (window.KeloBackend && window.KeloBackend.isServerMode()) {
-            await window.KeloBackend.logout();
-        }
-    } catch (e) { console.warn('KELO logout failed', e); }
-    closeMobileAccountSheet();
-    currentUser = null;
-    clearSession();
-    if (window.KeloState && typeof window.KeloState.clearCurrentUser === 'function') {
-        window.KeloState.clearCurrentUser();
-    }
-    const app = document.getElementById("app"), landing = document.getElementById("landing"), modal = document.getElementById("loginModal");
-    if (app) app.classList.add("hidden");
-    if (landing) landing.classList.remove("hidden");
-    if (modal) modal.classList.add("hidden");
-    setAppActive(false);
-    const preStyle = document.getElementById('keloPreloadHideLanding');
-    if (preStyle) preStyle.remove();
-    window.location.hash = "";
-    clearAuthError();
-    window.scrollTo({ top: 0, behavior: "auto" });
-}
+
 
 
 function profileMapPickerHtml(placeholderText){
     return '<div class="profile-map-placeholder"><svg viewBox="0 0 24 24"><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3"/></svg><span>'+escapeHtml(placeholderText)+'</span></div>';
 }
 
-function showCompleteProfile(){
-    document.getElementById("sidebar").innerHTML="";
-    // جلوی تب ثبت‌درخواست سفید و ناوبری قبل از تکمیل پروفایل
-    try{ sessionStorage.removeItem(TAB_KEY); }catch(e){}
-    window.__keloMobileTab = null;
-    const appEl = document.getElementById('app');
-    if(appEl){
-        appEl.classList.remove('mobile-tab-home','mobile-tab-request','mobile-tab-proposals','mobile-tab-request-offers');
-        appEl.classList.add('mobile-tab-profile-edit');
-    }
-    const nav = document.getElementById('mobileBottomNav');
-    if(nav) nav.classList.add('hidden');
-    updateMobileHeader('تکمیل پروفایل');
-    const name = currentUser.name || '';
-    const loc = currentUser.profileLocation;
-    const previewRaw = wizard._pendingProfileLocation || loc;
-    const previewLoc = previewRaw && typeof previewRaw.lat === 'number' && typeof previewRaw.lng === 'number'
-        ? Object.assign({}, previewRaw, { city: previewRaw.city || nearestCityFromCoords(previewRaw.lat, previewRaw.lng), province: previewRaw.province || provinceFromCity(previewRaw.city || nearestCityFromCoords(previewRaw.lat, previewRaw.lng)) })
-        : previewRaw;
-    const showPreview = previewLoc && typeof previewLoc.lat === 'number' && typeof previewLoc.lng === 'number';
 
-    const mapInner = showPreview
-        ? '<div class="profile-map-preview" id="profileMapPreview"></div>'
-        : profileMapPickerHtml('انتخاب موقعیت روی نقشه (اختیاری)');
-    const cityBox = showPreview
-        ? '<div class="profile-map-city-box">'+escapeHtml((previewLoc.city||'') + (previewLoc.province ? '، ' + previewLoc.province : ''))+'</div>'
-        : '';
 
-    document.getElementById("appContent").innerHTML =
-        '<div class="profile-section" style="position:relative;min-height:100%;background:#fff;padding:16px 16px 28px">'
-        + '<div class="panel card" style="max-width:100%;margin:0;border:0;box-shadow:none;border-radius:0;padding:12px 4px 8px;position:relative">'
-        +   '<div class="panel-title" style="justify-content:center;margin-bottom:18px"><h3 style="margin:0">تکمیل پروفایل</h3></div>'
-        +   '<form class="profile-edit-form" onsubmit="saveFirstProfile(event)">'
-        +     '<div class="profile-avatar-big">'+farmerAvatarSvg()+'</div>'
-        +     '<div class="profile-edit-field"><label>نام و نام خانوادگی <span style="color:red">*</span></label><input id="firstProfileName" class="profile-pill-input" type="text" value="'+escapeHtml(name)+'" placeholder="نام و نام خانوادگی" required></div>'
-        +     '<div class="profile-map-wrap">'
-        +       '<button type="button" class="profile-map-btn" onclick="activateProfileMapPickerForFirst()" aria-label="انتخاب موقعیت">'
-        +         mapInner + cityBox
-        +       '</button>'
-        +     '</div>'
-        +     '<button class="profile-save-btn" type="submit">ذخیره</button>'
-        +   '</form>'
-        + '</div></div>';
 
-    requestAnimationFrame(function(){
-        if(wizard._pendingProfileLocation || (currentUser.profileLocation && typeof currentUser.profileLocation.lat === 'number')) {
-            initializeProfileMapPreview();
-        }
-        // Previously called autoDetectProfileLocation('first') here, which
-        // silently requested GPS and auto-revealed the map/chip without the
-        // user tapping anything. The cover placeholder should only open when
-        // the user explicitly taps it (activateProfileMapPickerForFirst),
-        // matching the map field on the "need service" page.
-    });
-}
-
-async function saveFirstProfile(e){
-    e.preventDefault();
-    if (!currentUser) return;
-    const nameEl = document.getElementById('firstProfileName');
-    const name = (nameEl ? nameEl.value : '').trim();
-    const profile = Object.assign({}, currentUser.profile || {});
-    const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
-    if (profileLocation) {
-        if (profileLocation.city) profile.city = profileLocation.city;
-        if (profileLocation.province) profile.province = profileLocation.province;
-    }
-
-    const profileApi = window.KeloService && window.KeloService.profile;
-    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
-
-    const result = await profileApi.save({
-        userId: currentUser.id,
-        name: name,
-        profile: profile,
-        profileLocation: profileLocation,
-        profileCompleted: true
-    });
-    if (!result || !result.ok) {
-        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
-        return;
-    }
-    currentUser = upsertAuthenticatedUserMirror(result.data.user);
-    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
-
-    wizard._pendingProfileLocation = null;
-    wizard._profileAutoGeoRequested = false;
-    const av = document.getElementById('avatar'); if (av) av.innerText = currentUser.name;
-    updateMobileAccountIdentity();
-    const nav = document.getElementById('mobileBottomNav'); if (nav) nav.classList.remove('hidden');
-    const app = document.getElementById('app');
-    if (app) app.classList.remove('mobile-tab-profile-edit');
-    showToast((result.message) || 'اطلاعات ذخیره شد','success');
-    renderApp();
-}
 
 function buildProfileFormFields(){
     const p=currentUser.profile||{};
@@ -515,14 +390,7 @@ function buildProfileFormFields(){
     const cityOptions=(provinceCities[profileProvince]||[]).map(city=>'<option value="'+city+'" '+(p.city===city?'selected':'')+'>'+city+'</option>').join('');
     return '<div class="form-group"><label>نام کامل <span style="color:red">*</span></label><input id="pName" class="input" required value="'+escapeHtml(currentUser.name||"")+'" placeholder="نام و نام خانوادگی"></div><div class="form-group"><label>استان <span style="color:red">*</span></label><select id="pProvince" class="select" required onchange="updateProfileCities()"><option value="مازندران" '+(profileProvince==='مازندران'?'selected':'')+'>مازندران</option><option value="گیلان" '+(profileProvince==='گیلان'?'selected':'')+'>گیلان</option></select></div><div class="form-group"><label>شهر <span style="color:red">*</span></label><select id="pCity" class="select" required><option value="">انتخاب کنید</option>'+cityOptions+'</select></div><div class="form-group"><label>روستا (اختیاری)</label><input id="pVillage" class="input" value="'+escapeHtml(p.village||"")+'"></div>';
 }
-function cancelProfileEdit(){
-    const nav=document.getElementById('mobileBottomNav'); if(nav) nav.classList.remove('hidden');
-    const app=document.getElementById('app');
-    if(app) app.classList.remove('mobile-tab-profile-edit');
-    const tab = window.__keloMobileTab || 'home';
-    if(tab === 'request-offers') setMobileTab('proposals');
-    else setMobileTab(tab);
-}
+
 
 function updateProfileCities(){
     const province=document.getElementById("pProvince")?.value;
@@ -536,86 +404,8 @@ function updateProfileCities(){
     citySelect.innerHTML='<option value="">انتخاب کنید</option>'+(provinceCities[province]||[]).map(c=>'<option value="'+escapeHtml(c)+'">'+escapeHtml(c)+'</option>').join('');
     if((provinceCities[province]||[]).includes(current)) citySelect.value=current;
 }
-async function saveProfile(e){
-    e.preventDefault();
-    if (!currentUser) return;
-    const name = document.getElementById("pName").value.trim();
-    const province = document.getElementById("pProvince").value;
-    const city = document.getElementById("pCity").value;
-    const village = document.getElementById("pVillage").value.trim();
-    const profile = { province: province, city: city, village: village || "" };
 
-    const profileApi = window.KeloService && window.KeloService.profile;
-    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
 
-    const result = await profileApi.save({
-        userId: currentUser.id,
-        name: name,
-        profile: profile,
-        profileCompleted: true,
-        requireCity: true
-    });
-    if (!result || !result.ok) {
-        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
-        return;
-    }
-    currentUser = upsertAuthenticatedUserMirror(result.data.user);
-    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
-
-    const av = document.getElementById("avatar"); if (av) av.innerText = currentUser.name;
-    updateMobileAccountIdentity();
-    const sheetOpen = document.getElementById('mobileAccountBackdrop') && document.getElementById('mobileAccountBackdrop').classList.contains('open');
-    if (sheetOpen) {
-        renderMobileAccountSection('profile');
-        return;
-    }
-    const nav = document.getElementById('mobileBottomNav'); if (nav) nav.classList.remove('hidden');
-    const app = document.getElementById('app');
-    if (app) app.classList.remove('mobile-tab-profile-edit');
-    renderApp();
-}
-async function saveProfileEdit(e){
-    e.preventDefault();
-    if (!currentUser) return;
-    const nameEl = document.getElementById('editName');
-    const phoneEl = document.getElementById('editPhone');
-    const nidEl = document.getElementById('editNationalId');
-    const name = (nameEl ? nameEl.value : '').trim();
-    const phoneRaw = (phoneEl ? phoneEl.value : '').trim();
-    const nidRaw = (nidEl ? nidEl.value : '').trim();
-
-    const profile = Object.assign({}, currentUser.profile || {});
-    const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
-    if (profileLocation) {
-        if (profileLocation.city) profile.city = profileLocation.city;
-        if (profileLocation.province) profile.province = profileLocation.province;
-    }
-
-    const profileApi = window.KeloService && window.KeloService.profile;
-    if (!profileApi) { showToast('سرویس پروفایل در دسترس نیست.','error'); return; }
-
-    const result = await profileApi.save({
-        userId: currentUser.id,
-        name: name,
-        phone: phoneRaw,
-        nationalId: nidRaw,
-        profile: profile,
-        profileLocation: profileLocation,
-        profileCompleted: true,
-        allowIdentityChange: true
-    });
-    if (!result || !result.ok) {
-        showToast((result && result.message) || 'ذخیره اطلاعات انجام نشد.','error');
-        return;
-    }
-    currentUser = upsertAuthenticatedUserMirror(result.data.user);
-    if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
-
-    const av = document.getElementById('avatar'); if (av) av.innerText = currentUser.name;
-    wizard._pendingProfileLocation = null;
-    showToast((result.message) || 'اطلاعات ذخیره شد','success');
-    renderMobileAccountSection('profile');
-}
 function farmerAvatarSvg(){
     const name=(currentUser && currentUser.name && currentUser.name.trim())?currentUser.name.trim():'ک';
     const initial=name.charAt(0);
@@ -837,27 +627,9 @@ function renderMobileAccountSection(section){
       attachSheetDragOnce(sheet);
     }
 }
-function attachSheetDragOnce(sheet){ if(!sheet) return; sheet._keloDragAttached = true; }
-function openMobileAccountSheet(){
-    if(!currentUser || isAdmin(currentUser)) return;
-    const el=document.getElementById('mobileAccountBackdrop');
-    if(!el) return;
-    if(!el._keloBackdropBound){
-        el._keloBackdropBound = true;
-        el.addEventListener('click', function(e){ if(e.target === el) closeMobileAccountSheet(); });
-    }
-    el.classList.add('open');
-    el.setAttribute('aria-hidden','false');
-    document.body.style.overflow='hidden';
-    renderMobileAccountSection('profile');
-}
-function closeMobileAccountSheet(){
-    const el=document.getElementById('mobileAccountBackdrop');
-    if(el){el.classList.remove('open');el.setAttribute('aria-hidden','true');document.body.style.overflow='';}
-    if(window._keloProfileMap){ try{ window._keloProfileMap.remove(); }catch(e){} window._keloProfileMap=null; }
-    wizard._pendingProfileLocation = null;
-    wizard._profileAutoGeoRequested = false;
-}
+
+
+
 function openMobileAccountSection(section){ if(!currentUser || isAdmin(currentUser)) return; renderMobileAccountSection(section); }
 function openMobileProfileFromSheet(){openMobileAccountSection('profile');}
 function backToMobileAccountMenu(){ closeMobileAccountSheet(); }
@@ -900,27 +672,7 @@ function renderUser(){
     if(currentUser && !currentUser.profileCompleted){ showCompleteProfile(); return; }
     setMobileTab(window.__keloMobileTab||'home');
 }
-function updateMobileHeader(title){
-    const t=document.getElementById('mobileAppTitle'); if(t)t.textContent=title||'خانه';
-    const nav=document.getElementById('mobileBottomNav');
-    if(nav){ nav.querySelectorAll('button[data-tab]').forEach(b=>{ b.classList.toggle('active', b.dataset.tab === window.__keloMobileTab); }); }
-    const badge=document.getElementById('mobileNotificationBadge');
-    if(badge && currentUser){ const n=db.requestRecipients.filter(o=>o.providerId===currentUser.id && o.status==='pending').length; badge.textContent=toPersianDigits(n); badge.classList.toggle('hidden',!n); }
-    const calBadge = document.getElementById('mobileCalendarBadge');
-    if(calBadge && currentUser){
-        try{
-            const items = collectScheduledItems();
-            const today = new Date(); today.setHours(0,0,0,0);
-            const tomorrowEnd = new Date(today); tomorrowEnd.setDate(tomorrowEnd.getDate()+1); tomorrowEnd.setHours(23,59,59,999);
-            const todayMs = today.getTime();
-            const endMs = tomorrowEnd.getTime();
-            const count = items.filter(it => { const s = it.start.getTime(); const e = it.end.getTime(); return s <= endMs && e >= todayMs; }).length;
-            calBadge.textContent = toPersianDigits(count);
-            calBadge.classList.toggle('hidden', !count);
-        }catch(e){ calBadge.classList.add('hidden'); }
-    }
-    updateMobileAccountIdentity();
-}
+
 function onMobilePlusClick(){
     sessionStorage.removeItem('kelo_mobile_success');
     mobileRequestSuccess = false; mobileSuccessData = null;
@@ -928,43 +680,14 @@ function onMobilePlusClick(){
     resetMobileWizardFlow();
     setMobileTab('request');
 }
-function setMobileTab(tab){
-    const nav=document.getElementById('mobileBottomNav');
-    if(nav){ if(tab === 'request-offers') nav.classList.add('hidden'); else nav.classList.remove('hidden'); }
-    if(tab !== 'request'){ if(wizard.formSheetOpen) closeMobileFormSheet(); if(wizard.servicePickerOpen) closeMobileServicePicker(); }
-    if(window.__keloMobileTab === 'request-offers' && tab !== 'request-offers'){ if(window._keloOffersMap){ try{ window._keloOffersMap.remove(); }catch(e){} window._keloOffersMap = null; } window._keloOffersMarkers = {}; }
-    closeMobileMapPickerOverlay();
-    window.__keloMobilePreviousTab=window.__keloMobileTab||'home';
-    window.__keloMobileTab=tab;
-    try{ sessionStorage.setItem(TAB_KEY, tab); }catch(e){}
-    const app=document.getElementById('app');
-    if(app){app.classList.remove('mobile-tab-home','mobile-tab-request','mobile-tab-proposals','mobile-tab-request-offers');app.classList.add('mobile-tab-'+tab);}
-    document.getElementById('sidebar').innerHTML='';
-    document.getElementById('sidebar').dataset.mobileSheetOpen='1';
-    if(tab==='home') renderMobileHome();
-    else if(tab==='request') renderMobileRequest();
-    else if(tab==='proposals') renderMobileProposals();
-    updateMobileHeader(tab==='home'?'خانه':tab==='request'?'ثبت درخواست':'کارهای من');
-}
+
 function renderMobileHome(){
     const c=document.getElementById('appContent');
     c.className='content';
     c.innerHTML='<div class="mobile-home-page"><div class="mobile-home-hero"><img src="https://cdn.imgurl.ir/uploads/s3128_home.jpg" alt="کِلو" onerror="this.style.background=\'linear-gradient(135deg,#9dc457,#d4b75c)\';this.removeAttribute(\'src\')"><h2>کِلو</h2><p>دسترسی سریع به ادوات کشاورزی<br>و اپراتورهای متخصص در منطقه شما</p><button type="button" class="mobile-home-action" onclick="onMobilePlusClick()">ثبت درخواست</button></div></div>';
 }
 function resetMobileWizardFlow(){ wizard = makeEmptyWizard(); }
-function attachGenericSheetDrag(sheet, onClose){
-    if(!sheet || sheet._keloGenericDrag) return;
-    if(document.documentElement.getAttribute('data-viewport') !== 'mobile') return;
-    sheet._keloGenericDrag = true;
-    let drag = null;
-    const start = function(clientY){ const h = sheet.getBoundingClientRect().height; drag = { startY: clientY, startH: h, parentH: window.innerHeight }; sheet.style.transition = 'none'; };
-    const move = function(clientY){ if(!drag) return; const dy = clientY - drag.startY; const newH = Math.max(drag.parentH * 0.15, Math.min(drag.parentH * 1.0, drag.startH - dy)); sheet.style.height = newH + 'px'; };
-    const end = function(){ if(!drag) return; sheet.style.transition = ''; const h = sheet.getBoundingClientRect().height; const ratio = h / drag.parentH; sheet.style.height = ''; if(ratio < 0.55){ if(onClose) onClose(); } drag = null; };
-    sheet.addEventListener('touchstart', function(e){ const t = e.touches[0]; if(!t) return; if(e.target.closest('button, input, textarea, select, a')) return; const scrollBody = e.target.closest('.mobile-account-body, .mobile-sheet-body, .request-offers-sheet-body'); if(scrollBody && scrollBody.scrollTop > 0) return; start(t.clientY); }, {passive:true});
-    sheet.addEventListener('touchmove', function(e){ if(!drag) return; const t = e.touches[0]; if(!t) return; if(e.cancelable) e.preventDefault(); move(t.clientY); }, {passive:false});
-    sheet.addEventListener('touchend', end);
-    sheet.addEventListener('touchcancel', end);
-}
+
 
 function keloEmptyStateHtml(title, desc, actionHtml){
     const icon = '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>';
@@ -985,36 +708,8 @@ function renderMobileRequestBase(){
     if(!sb) return;
     sb.innerHTML = '<div class="mobile-request-base"><h2>چه کاری برایتان انجام دهیم؟</h2><p>یکی از گزینه‌های زیر را انتخاب کنید</p><div class="role-cards"><button type="button" class="role-card farmer" onclick="openMobileFormSheet(\'receive\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V9"/><path d="M12 13C12 7 6 5 6 5s0 6 6 8"/><path d="M12 13c0-6 6-8 6-8s0 6-6 8"/></svg></div><strong>نیاز به خدمت دارم</strong><span>برای زمین من تراکتور یا کمباین بفرست</span></button><button type="button" class="role-card machine" onclick="openMobileFormSheet(\'provide\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="18" r="3"/><circle cx="18" cy="18" r="2.5"/><path d="M2 14h3a2 2 0 0 1 2 2v3"/><path d="M7 13V6a1 1 0 0 1 1-1h3l2 5"/><path d="M13 10h4l2 4"/></svg></div><strong>خدمات ارائه می‌دم</strong><span>ماشین‌آلات من آماده کاره</span></button></div></div>';
 }
-function openMobileFormSheet(type){
-    if(!currentUser) return;
-    wizard = makeEmptyWizard();
-    wizard.type = type;
-    wizard.formSheetOpen = true;
-    const theme = type === 'provide' ? 'orange' : 'blue';
-    document.documentElement.setAttribute('data-form-theme', theme);
-    if(!wizard.data.dateStart) wizard.data.dateStart = localDateToIso(new Date());
-    if(type === 'provide' && !wizard.data.priceUnit) wizard.data.priceUnit = 'تومان / هکتار';
-    mobileL2Fields().forEach(function(f){
-        if(f[2] === 'areaSlider' && wizard.data[f[0]] === undefined){
-            wizard.data[f[0]] = f[3].default;
-        }
-    });
-    renderMobileFormSheet();
-}
-function closeMobileFormSheet(){
-    wizard.formSheetOpen = false;
-    wizard.servicePickerOpen = false;
-    wizard.servicePickerTemp = null;
-    wizard.servicePickerExpanded = null;
-    wizard.servicePickerSearch = '';
-    const el1 = document.getElementById('keloFormSheetBackdrop'); if(el1) el1.remove();
-    const el2 = document.getElementById('keloServicePickerBackdrop'); if(el2) el2.remove();
-    const el3 = document.getElementById('keloCalendarModal'); if(el3) el3.remove();
-    const el4 = document.getElementById('keloPriceUnitSheet'); if(el4) el4.remove();
-    const el5 = document.getElementById('keloActivityAreaSheet'); if(el5) el5.remove();
-    document.body.style.overflow = '';
-    document.documentElement.removeAttribute('data-form-theme');
-}
+
+
 function renderMobileFormSheet(){
     if(!wizard.formSheetOpen) return;
     let backdrop = document.getElementById('keloFormSheetBackdrop');
@@ -1096,19 +791,8 @@ function renderMobilePriceUnitField(field){
     const isPlaceholder = !value;
     return '<button type="button" class="mobile-choice-trigger" onclick="openPriceUnitSheet()"><span class="'+(isPlaceholder?'placeholder':'')+'">'+escapeHtml(display)+'</span><span class="kelo-inline-chevron"><i class="kelo-chevron down"></i></span></button>';
 }
-function openPriceUnitSheet(){
-    const options = ['تومان / هکتار','تومان / روز','تومان / سرویس'];
-    const current = wizard.data.priceUnit || '';
-    const listHtml = options.map(function(o){
-        const isSel = o === current;
-        return '<button type="button" class="kelo-rate-row '+(isSel?'selected':'')+'" onclick="choosePriceUnit(\''+escapeHtml(o)+'\')"><span class="kelo-rate-label">'+escapeHtml(o)+'</span>'+(isSel?'<span class="kelo-rate-check">✓</span>':'')+'</button>';
-    }).join('');
-    const html = '<button type="button" class="mobile-sheet-handle"></button><div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closePriceUnitSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><h2>واحد قیمت</h2><span></span></div><div class="mobile-sheet-body" style="padding:6px 0 12px">'+listHtml+'</div>';
-    let backdrop = document.getElementById('keloPriceUnitSheet');
-    if(!backdrop){ backdrop = document.createElement('div'); backdrop.id='keloPriceUnitSheet'; backdrop.className='mobile-sheet-backdrop level3'; document.body.appendChild(backdrop); }
-    backdrop.innerHTML = '<div class="mobile-sheet picker">'+html+'</div>';
-}
-function closePriceUnitSheet(){ const el=document.getElementById('keloPriceUnitSheet'); if(el) el.remove(); }
+
+
 function choosePriceUnit(value){
     wizard.data.priceUnit = value;
     clearFieldError('priceUnit');
@@ -1264,85 +948,7 @@ function submitMobileForm(){
     });
     finalizeMobileForm();
 }
-async function finalizeMobileForm(){
-    if(!currentUser) return;
-    const savedType = wizard.type, savedService = wizard.service;
-    let newId = null;
-    const fields = mobileL2Fields();
-    const data = cloneObject(wizard.data || {});
-    fields.forEach(function(f){
-        const id = f[0], type = f[2];
-        if (type === 'areaSlider') {
-            const range = document.querySelector('input[type=range][data-slider-id="' + id + '"]');
-            if (range) data[id] = Number(range.value) || 0;
-            return;
-        }
-        const el = document.getElementById('wf_' + id);
-        if (!el) return;
-        if (type === 'file') {
-            data[id] = Array.from(el.files || []).map(function(x){ return x.name; });
-        } else if (type === 'number') {
-            data[id] = el.value === '' ? '' : Number(el.value);
-        } else {
-            data[id] = el.value;
-        }
-    });
-    if(data.dateStart) data.date = data.dateStart;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            let result;
-            if(savedType==='receive' || savedType==='provide'){
-                result = wizard.editRequestId
-                    ? await window.KeloBackend.updateRequest(wizard.editRequestId,savedService,data)
-                    : await window.KeloBackend.createRequest(savedService,data,savedType==='provide'?'provide':'need');
-            }else{
-                result = await window.KeloBackend.createListing(savedService,data);
-            }
-            applyServerSnapshot(result);
-            newId=result.id || (savedType==='receive' ? (db.requests[0]&&db.requests[0].id) : (db.listings[0]&&db.listings[0].id));
-        }catch(err){ showToast((err&&err.body&&err.body.error)||'ذخیره اطلاعات روی سرور انجام نشد.','error'); return; }
-    } else if(wizard.type === 'receive' || wizard.type === 'provide'){
-        if(wizard.editRequestId){
-            const request=db.requests.find(r=>r.id===wizard.editRequestId && r.userId===currentUser.id);
-            if(!request){ showToast('درخواست برای ویرایش پیدا نشد','error'); return; }
-            // هم‌تراز با Server + agreed/expired
-            if(['accepted','agreed','in_progress','completed','cancelled','expired'].includes(request.status)){ showToast('این درخواست دیگر قابل ویرایش نیست','error'); return; }
-            request.service=savedService;
-            request.data=data;
-            request.requesterName=currentUser.name;
-            request.updated=new Date().toISOString();
-            // بعد از ویرایش همه پیشنهادهای قبلی پاک شوند
-            db.requestRecipients=db.requestRecipients.filter(x=>x.requestId!==request.id);
-            newId=request.id;
-        }else{
-            const request = { id: "r" + Date.now() + Math.random().toString(36).slice(2,6), userId: currentUser.id, requesterName: currentUser.name, requestKind: savedType==='provide'?'provide':'need', service: savedService, data: data, status: "pending", created: new Date().toISOString() };
-            db.requests.push(request);
-            newId = request.id;
-        }
-        saveDB();
-    } else {
-        const listing = { id: "l" + Date.now() + Math.random().toString(36).slice(2,6), userId: currentUser.id, providerName: currentUser.name, service: savedService, data: data, status: "active", created: new Date().toISOString() };
-        db.listings.push(listing); saveDB();
-        newId = listing.id;
-    }
-    const wasEdit = !!wizard.editRequestId;
-    clearWizardDraft(); closeMobileFormSheet();
-    if (wasEdit) {
-        mobileRequestSuccess = false;
-        mobileSuccessData = null;
-        try { sessionStorage.removeItem('kelo_mobile_success'); } catch (e) {}
-        resetMobileWizardFlow();
-        showToast('درخواست به‌روزرسانی شد', 'success');
-        mobileOrdersSubTab = 'requests';
-        setMobileTab('proposals');
-        return;
-    }
-    mobileRequestSuccess = true;
-    mobileSuccessData = { type: savedType, service: savedService, id: newId, ts: Date.now(), updated: false };
-    try{ sessionStorage.setItem('kelo_mobile_success', JSON.stringify(mobileSuccessData)); }catch(e){}
-    resetMobileWizardFlow();
-    setMobileTab('request');
-}
+
 function renderMobileSuccessScreen(){
     const sb = document.getElementById('sidebar');
     const c  = document.getElementById('appContent');
@@ -1358,18 +964,7 @@ function renderMobileSuccessScreen(){
         : '<button type="button" class="btn btn-brand" onclick="setMobileTab(\'proposals\')">مشاهده سفارش‌ها</button>';
     sb.innerHTML = '<div class="mobile-success-state"><div class="success-icon">✓</div><h2>' + title + '</h2><p>' + desc + '</p>' + primaryBtn + '<button type="button" class="btn btn-brand-outline" onclick="onMobilePlusClick()">ثبت درخواست جدید</button></div>';
 }
-function nearestCityFromCoords(lat, lng, maxDistKm){
-    if(lat == null || lng == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return '';
-    const limit = (maxDistKm == null || maxDistKm === undefined) ? KELO_CITY_MAX_DIST_KM : maxDistKm;
-    let best = null, bestDist = Infinity;
-    for(const [name, coords] of Object.entries(KELO_CITY_COORDS)){
-        const d = geoDistanceKm([Number(lat), Number(lng)], coords);
-        if(d < bestDist){ bestDist = d; best = name; }
-    }
-    if(!best) return '';
-    if(limit > 0 && bestDist > limit) return '';
-    return best;
-}
+
 function locationLabelFromCoords(lat, lng){
     const city = nearestCityFromCoords(lat, lng);
     if(city){
@@ -1378,27 +973,8 @@ function locationLabelFromCoords(lat, lng){
     }
     return 'موقعیت روی نقشه';
 }
-function provinceFromCity(city){
-    if(!city) return '';
-    for(const [prov, cities] of Object.entries(KELO_GEOGRAPHY)){ if(cities.includes(city)) return prov; }
-    return '';
-}
-function requestCityName(r){
-    const loc = r?.data?.serviceLocation;
-    if(loc){
-        if(typeof loc.label === 'string' && loc.label.trim()) return loc.label.trim();
-        if(typeof loc.city === 'string' && loc.city.trim()) return loc.city.trim();
-        if(typeof loc.lat === 'number' && typeof loc.lng === 'number'){
-            const city = nearestCityFromCoords(loc.lat, loc.lng);
-            if(city) return city;
-            return 'موقعیت روی نقشه';
-        }
-    }
-    if(r?.data?.activityArea && Array.isArray(r.data.activityArea) && r.data.activityArea.length){
-        return formatActivityArea(r.data.activityArea);
-    }
-    return r?.data?.city || r?.data?.province || '—';
-}
+
+
 function mobileProposalRequests(){
     return db.requests
         .filter(r=>r.userId===currentUser.id)
@@ -1468,71 +1044,9 @@ function getRequestStatusClass(r){
     if(s === 'cancelled') return 'cancelled';
     return 'progress';
 }
-function editRequest(requestId){
-    const req=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
-    if(!req || req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
-        showToast('این درخواست دیگر قابل ویرایش نیست','error'); return;
-    }
-    wizard=makeEmptyWizard();
-    wizard.type=(req.requestKind==='provide')?'provide':'receive';
-    wizard.formSheetOpen=true;
-    wizard.service=req.service;
-    wizard.data=cloneObject(req.data || {});
-    wizard.serviceOptions={};
-    // Only service sub-options belong in serviceOptions (not area/dates/price/...)
-    const l3 = (SERVICE_L3_FIELDS && SERVICE_L3_FIELDS[req.service]) || [];
-    l3.forEach(function(sf){
-        if (req.data && req.data[sf.id] !== undefined) wizard.serviceOptions[sf.id] = cloneObject(req.data[sf.id]);
-    });
-    wizard.editRequestId=req.id;
-    if(!wizard.data.dateStart) wizard.data.dateStart=wizard.data.date||localDateToIso(new Date());
-    document.documentElement.setAttribute('data-form-theme', wizard.type === 'provide' ? 'orange' : 'blue');
-    renderMobileFormSheet();
-}
-async function deleteRequest(requestId){
-    const req=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
-    if(!req) return;
-    if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
-        showToast('درخواست توافق‌شده قابل حذف نیست','error'); return;
-    }
-    if(!confirm('این درخواست حذف شود؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{ applyServerSnapshot(await window.KeloBackend.deleteRequest(requestId)); showToast('درخواست حذف شد','success'); renderMobileProposals(); }catch(err){showToast((err&&err.body&&err.body.error)||'حذف درخواست انجام نشد.','error');} return;
-    }
-    // Local mirrors Server: keep the request for history and mark it cancelled.
-    req.status='cancelled';
-    db.requestRecipients.filter(x=>x.requestId===requestId && (x.status==='pending' || x.status==='accepted')).forEach(function(x){
-        x.status='closed';
-        x.closedAt=new Date().toISOString();
-    });
-    saveDB();
-    showToast('درخواست حذف شد','success');
-    renderMobileProposals();
-}
-async function rejectOffer(recipientId){
-    const recipient=db.requestRecipients.find(x=>x.id===recipientId && x.providerId===currentUser.id);
-    if(!recipient) return;
-    if(recipient.status!=='pending'){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        return;
-    }
-    if(!confirm('این درخواست رد شود؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{applyServerSnapshot(await window.KeloBackend.rejectRecipient(recipientId));showToast('درخواست رد شد','success');renderMobileProposals();updateMobileHeader('کارهای من');}catch(err){showToast((err&&err.body&&err.body.error)||'رد درخواست انجام نشد.','error');} return;
-    }
-    // دفاعی: بعد از confirm دوباره وضعیت را چک کن (مثل Server)
-    if(recipient.status!=='pending'){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        renderMobileProposals();
-        return;
-    }
-    recipient.status='rejected';
-    recipient.respondedAt=new Date().toISOString();
-    saveDB();
-    showToast('درخواست رد شد','success');
-    renderMobileProposals();
-    updateMobileHeader('کارهای من');
-}
+
+
+
 function formatMoneyShort(value){
     const n = Number(value) || 0;
     if(n >= 1000000){ const m = n / 1000000; return toPersianDigits(m >= 10 ? Math.round(m) : m.toFixed(1)) + 'م'; }
@@ -1703,54 +1217,10 @@ function renderDealCounterparty(deal, subLine){
         + actionsHtml
         + '</div>';
 }
-function openPaymentOptions(dealId){
-    const d=db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
-    if(!d) return;
-    if(d.paymentStatus==='paid'){ showToast('این توافق قبلاً پرداخت شده است','success'); return; }
-    const el=document.getElementById('keloPaymentOptions'); if(el) el.remove();
-    const total=Number(d.total)||0;
-    const backdrop=document.createElement('div');
-    backdrop.id='keloPaymentOptions';
-    backdrop.className='mobile-sheet-backdrop level3';
-    backdrop.innerHTML='<div class="mobile-sheet picker">'
-        +'<button type="button" class="mobile-sheet-handle"></button>'
-        +'<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closePaymentOptions()">'+KELO_BACK_CHEVRON_SVG+'</button><h2>روش پرداخت</h2><span></span></div>'
-        +'<div class="mobile-sheet-body">'
-        +'<p style="text-align:center;margin:0 0 18px;color:#5A635C;font-size:14px">مبلغ قابل پرداخت: <strong style="color:#1F1F1F">'+formatMoney(total)+'</strong></p>'
-        +'<button type="button" class="kelo-rate-row" onclick="payCash(\''+d.id+'\')"><span class="kelo-rate-label">پرداخت نقدی</span><span class="kelo-rate-check">›</span></button>'
-        +'<button type="button" class="kelo-rate-row" onclick="payOnline(\''+d.id+'\')"><span class="kelo-rate-label">پرداخت آنلاین</span><span class="kelo-rate-check">›</span></button>'
-        +'</div></div>';
-    document.body.appendChild(backdrop);
-}
-function closePaymentOptions(){
-    const el=document.getElementById('keloPaymentOptions'); if(el) el.remove();
-}
-function payCash(dealId){
-    closePaymentOptions();
-    const d=db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
-    if(!d) return;
-    if(!confirm('آیا مبلغ را به صورت نقدی پرداخت کردید؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        window.KeloBackend.payDeal(dealId).then(function(res){
-            applyServerSnapshot(res);
-            showToast('پرداخت نقدی ثبت شد','success');
-            renderMobileProposals();
-        }).catch(function(err){
-            showToast((err&&err.body&&err.body.error)||'ثبت پرداخت انجام نشد.','error');
-        });
-        return;
-    }
-    d.paymentStatus='paid';
-    d.paymentMethod='cash';
-    if(d.status==='agreed') d.status='paid';
-    saveDB();
-    showToast('پرداخت نقدی ثبت شد','success');
-    renderMobileProposals();
-}
-function payOnline(dealId){
-    closePaymentOptions();
-    showToast('پرداخت آنلاین به‌زودی متصل می‌شود.','info');
-}
+
+
+
+
 function openDealProblemReport(dealId){
     const d = db.deals.find(function(x){ return String(x.id) === String(dealId); });
     if(!d) return;
@@ -1804,28 +1274,7 @@ function openDealProblemReport(dealId){
 function closeDealProblemReport(){
     const el = document.getElementById('keloDealProblem'); if(el) el.remove();
 }
-function submitDealProblemReport(dealId){
-    const d = db.deals.find(function(x){ return String(x.id) === String(dealId); });
-    if(!d) return;
-    const picked = document.querySelector('input[name="keloProblemReason"]:checked');
-    if(!picked){ showToast('لطفاً یک مورد را انتخاب کنید','error'); return; }
-    const noteEl = document.getElementById('dealProblemNote');
-    const note = noteEl ? noteEl.value.trim() : '';
-    if(!db.dealProblems) db.dealProblems = [];
-    db.dealProblems.push({
-        id: 'dp' + Date.now(),
-        dealId: dealId,
-        userId: currentUser.id,
-        role: String(d.userId) === String(currentUser.id) ? 'farmer' : 'provider',
-        reason: picked.value,
-        note: note,
-        createdAt: new Date().toISOString()
-    });
-    try { saveDB(); } catch(e){}
-    try { localStorage.setItem('kelo_deal_problems', JSON.stringify(db.dealProblems)); } catch(e){}
-    closeDealProblemReport();
-    showToast('گزارش مشکل ثبت شد','success');
-}
+
 
 function openDealReport(dealId){
     const d=db.deals.find(x=>x.id===dealId);
@@ -1891,68 +1340,7 @@ function setReportStar(qId,val){
     const stars=container.querySelectorAll('.report-star');
     stars.forEach(function(s,i){ if(i<val) s.classList.add('active'); else s.classList.remove('active'); });
 }
-function submitDealReport(dealId){
-    const ratings=window.__keloReportRatings||{};
-    const noteEl=document.getElementById('reportNote');
-    const note=noteEl?String(noteEl.value||'').slice(0,2000):'';
-    const answeredCount = Object.keys(ratings).length;
-    if(answeredCount === 0 && !note.trim()){ showToast('لطفاً حداقل به یک مورد امتیاز بدهید یا نظر بنویسید','error'); return; }
-    const d=db.deals.find(x=>String(x.id)===String(dealId));
-    if(!d){ showToast('توافق پیدا نشد','error'); return; }
-    const isFarmer=String(d.userId)===String(currentUser.id);
-    const isProvider=String(d.providerId)===String(currentUser.id);
-    if(!isFarmer && !isProvider){
-        showToast('فقط طرفین توافق می‌توانند گزارش ثبت کنند','error');
-        return;
-    }
-    if(d.status !== 'completed'){
-        showToast('فقط پس از تکمیل کار می‌توانید نظر ثبت کنید','error');
-        return;
-    }
-    if(hasUserReviewedDeal(dealId)){
-        showToast('قبلاً برای این توافق گزارش ثبت کرده‌اید','error');
-        return;
-    }
-    // Sanitize ratings: only keep numbers 1-5 (مثل Server)
-    const cleanRatings = {};
-    Object.keys(ratings).forEach(function(k){
-        const v = Number(ratings[k]);
-        if(v >= 1 && v <= 5) cleanRatings[k] = v;
-    });
-    if(Object.keys(cleanRatings).length === 0 && !note.trim()){
-        showToast('لطفاً حداقل به یک مورد امتیاز بدهید یا نظر بنویسید','error');
-        return;
-    }
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        window.KeloBackend.createReview({dealId:dealId,ratings:cleanRatings,note:note}).then(function(res){
-            applyServerSnapshot(res);
-            closeDealReport();
-            showToast('گزارش شما ثبت شد','success');
-            if(typeof renderMobileProposals === 'function') renderMobileProposals();
-            if(window.__keloInvoiceDetailDealId && String(window.__keloInvoiceDetailDealId) === String(dealId)){
-                openInvoiceDetail(dealId);
-            } else if(document.getElementById('mobileAccountSheet') && document.querySelector('#mobileAccountSheet .invoice-deal-card, #mobileAccountSheet .invoice-summary-card')){
-                renderMobileAccountSection('invoice');
-            }
-        }).catch(function(err){
-            showToast((err&&err.body&&err.body.error)||'ثبت گزارش انجام نشد.','error');
-        });
-        return;
-    }
-    const targetId=isFarmer?d.providerId:d.userId;
-    if(!db.reviews) db.reviews=[];
-    db.reviews.push({ id:'rv'+Date.now(), dealId:dealId, userId:currentUser.id, targetId:targetId, ratings:cleanRatings, note:note, createdAt:new Date().toISOString() });
-    saveDB();
-    try { localStorage.setItem('kelo_reviews', JSON.stringify(db.reviews)); } catch(e){}
-    closeDealReport();
-    showToast('گزارش شما ثبت شد','success');
-    if(typeof renderMobileProposals === 'function') renderMobileProposals();
-    if(window.__keloInvoiceDetailDealId && String(window.__keloInvoiceDetailDealId) === String(dealId)){
-        openInvoiceDetail(dealId);
-    } else if(document.getElementById('mobileAccountSheet') && document.querySelector('#mobileAccountSheet .invoice-deal-card, #mobileAccountSheet .invoice-summary-card')){
-        renderMobileAccountSection('invoice');
-    }
-}
+
 function getUserRating(userId){
     const reviews = (db.reviews || []).filter(function(r){ return String(r.targetId) === String(userId); });
     if (!reviews.length) return null;
@@ -2058,11 +1446,7 @@ function renderMobileDealsList(){
     }).join('');
 }
 let mobileOrdersSubTab = 'requests';
-function setMobileOrdersSubTab(tab){
-    const allowed = ['requests','offers','deals'];
-    mobileOrdersSubTab = allowed.includes(tab) ? tab : 'requests';
-    renderMobileProposals();
-}
+
 function renderMobileProposals(){
     const c=document.getElementById('appContent'); c.className='content';
     const tabsHtml = '<div class="mobile-orders-tabs">'
@@ -2225,284 +1609,19 @@ function openMobileSchedule(){
     attachSheetDragOnce(sheet);
 }
 
-function disposeOffersMap(){
-    window._keloOffersMapToken = (window._keloOffersMapToken || 0) + 1;
-    if(window._keloOffersMap){ try{ window._keloOffersMap.remove(); }catch(e){} window._keloOffersMap = null; }
-    window._keloOffersMarkers = {};
-}
-function goBackFromOffersMap(){
-    disposeOffersMap();
-    window._keloOffersMarkers = {};
-    const prev = window.__keloMobilePreviousTab || 'proposals';
-    setMobileTab(prev === 'request-offers' ? 'proposals' : prev);
-}
-function openRequestLocationMap(requestId){
-    if(!currentUser) return;
-    const req = db.requests.find(r => r.id === requestId);
-    if(!req){ showToast('درخواست پیدا نشد', 'error'); return; }
-    disposeOffersMap();
-    const mapToken = window._keloOffersMapToken || 0;
-    const app = document.getElementById('app');
-    if(app){ app.classList.remove('mobile-tab-home','mobile-tab-request','mobile-tab-proposals','mobile-tab-request-offers'); app.classList.add('mobile-tab-request-offers');
-    const nav = document.getElementById('mobileBottomNav'); if(nav) nav.classList.add('hidden'); }
-    window.__keloMobilePreviousTab = window.__keloMobileTab || 'proposals';
-    window.__keloMobileTab = 'request-offers';
-    const sb = document.getElementById('sidebar'); if(sb){ sb.innerHTML = ''; }
-    const c = document.getElementById('appContent'); if(!c) return;
-    c.className = 'content';
-    c.innerHTML = '<div class="request-offers-view"><div id="keloOffersMap" class="request-offers-map"></div><button type="button" class="request-offers-back-btn" onclick="goBackFromOffersMap()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button></div>';
-    updateMobileHeader('موقعیت درخواست');
-    requestAnimationFrame(() => {
-        if(mapToken !== (window._keloOffersMapToken || 0)) return;
-        initRequestLocationMap(req);
-    });
-}
-function initRequestLocationMap(req){
-    const token = window._keloOffersMapToken || 0;
-    const el = document.getElementById('keloOffersMap');
-    if(!el || typeof L === 'undefined'){ if(el) el.innerHTML = '<div style="display:grid;place-items:center;height:100%;color:#c0392b;font-weight:700;padding:20px;text-align:center">خطا در بارگذاری نقشه.</div>'; return; }
-    if(window._keloOffersMap){ try{ window._keloOffersMap.remove(); }catch(e){} }
-    const reqLoc = req.data?.serviceLocation;
-    const hasReqLoc = reqLoc && typeof reqLoc.lat === 'number' && typeof reqLoc.lng === 'number';
-    const center = hasReqLoc ? [reqLoc.lat, reqLoc.lng] : [36.5659, 53.0586];
-    const map = createKeloMap(el, { zoomControl:false, attributionControl:false }, center, 13);
-    if(hasReqLoc){ const reqIcon = L.divIcon({ className: 'kelo-req-marker', html: '<div style="width:38px;height:38px;background:#78a83f;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 4px 12px rgba(0,0,0,.3);position:relative;"><div style="position:absolute;inset:7px;background:#fff;border-radius:50%;"></div></div>', iconSize: [38, 38], iconAnchor: [19, 38] }); L.marker(center, { icon: reqIcon }).addTo(map).bindPopup('<div class="map-card-popup"><strong>📍 موقعیت درخواست</strong><small>'+escapeHtml(serviceName(req.service))+'<br>'+escapeHtml(requestDate(req))+'</small></div>').openPopup(); }
-    if(token !== (window._keloOffersMapToken || 0)){ try{ map.remove(); }catch(e){} return; }
-    window._keloOffersMap = map;
-    requestAnimationFrame(() => { try{ map.invalidateSize(true); }catch(e){} });
-    setTimeout(() => { if(token !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 120);
-    setTimeout(() => { if(token !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 380);
-}
-async function openRequestOffersMap(requestId){
-    if(!currentUser) return;
-    const req = db.requests.find(r => r.id === requestId && r.userId === currentUser.id);
-    if(!req){ showToast('\u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f', 'error'); return; }
-    const _isProvideReq = (req.requestKind === 'provide');
-    const _existingSheet = document.getElementById('keloRequestOffersSheet');
-    const _existingContent = document.getElementById('keloRequestOffersContent');
-    const _isSameRequest = !!(_existingSheet && _existingContent && _existingSheet.dataset.requestId === String(requestId));
-    if(!_isSameRequest){ closeRequestOffersSheet(); }
-    let candidates = getEligibleProvidersForRequest(req);
-    if(window.KeloBackend && window.KeloBackend.isServerMode()) {
-        try {
-            const remote = await window.KeloBackend.getProviders(req.id);
-            candidates = Array.isArray(remote.providers) ? remote.providers : [];
-        } catch(err) {
-            showToast((err&&err.body&&err.body.error)||'\u062f\u0631\u06cc\u0627\u0641\u062a \u067e\u06cc\u0634\u0646\u0647\u0627\u062f\u0647\u0627\u06cc \u0642\u0627\u0628\u0644 \u0627\u0631\u0633\u0627\u0644 \u0627\u0646\u062c\u0627\u0645 \u0646\u0634\u062f.','error');
-            return;
-        }
-    }
-    const _myId = String(currentUser.id);
-    // For a provider's own 'provide' ad, proposals are stored against the
-    // farmer's 'need' request (not the ad), so match those by counterparty too.
-    const currentRecipients = db.requestRecipients.filter(function(x){
-        if(x.requestId===req.id) return true;
-        if(!_isProvideReq) return false;
-        const _px = String(x.proposerId || x.proposer_id || '');
-        const _rx = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
-        if(_px !== _myId && _rx !== _myId) return false;
-        const _rq = db.requests.find(function(q){ return q.id === x.requestId; });
-        if(_rq && _rq.requestKind === 'provide') return false;
-        return (_rq ? _rq.service : x.service) === req.service;
-    });
-    const recipientByProvider = {};
-    currentRecipients.forEach(function(x){
-        const _p = String(x.proposerId || x.proposer_id || '');
-        const _r = String(x.recipientId || x.recipient_id || x.providerId || x.provider_id || '');
-        const _o = _p === _myId ? _r : _p;
-        if(!_o || _o === _myId) return;
-        const existing = recipientByProvider[_o];
-        const xActive  = (x.status === 'pending' || x.status === 'accepted');
-        const exActive = existing && (existing.status === 'pending' || existing.status === 'accepted');
-        if(xActive && !exActive){
-            recipientByProvider[_o] = x;
-        } else if(!existing){
-            recipientByProvider[_o] = x;
-        }
-    });
-    const providersHtml = candidates.length ? candidates.map(o=>{
-        const rec=recipientByProvider[o.providerId];
-        let action='';
-        if(rec && rec.status==='pending'){
-            action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
-        }else if(rec && rec.status==='rejected'){
-            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
-        }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
-            action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
-        }else{
-            action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
-        }
-        const service = o.service || req.service;
-        let _subOpt = '';
-        if (o.data) {
-            if (Array.isArray(o.data.landType) && o.data.landType.length) _subOpt = o.data.landType[0];
-            else if (Array.isArray(o.data.crop) && o.data.crop.length) _subOpt = o.data.crop[0];
-            else if (typeof o.data.landType === 'string' && o.data.landType) _subOpt = o.data.landType;
-            else if (typeof o.data.crop === 'string' && o.data.crop) _subOpt = o.data.crop;
-        }
-        const _serviceDisplay = serviceName(service) + (_subOpt ? ' ' + _subOpt : '');
-        const _rating = getUserRating(o.providerId);
-        const _ratingHtml = (_rating && _rating.count > 0) ? ' <span class="kelo-rating-badge"><svg class="kelo-rating-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg><span class="kelo-rating-num">' + toPersianDigits(_rating.average.toFixed(1)) + '</span></span>' : '';
-        let _infoHtml = '';
-        if(_isProvideReq){
-            const _area = (o.data && (o.data.area || o.data.amount)) ? (o.data.area || o.data.amount) : null;
-            let _locDisplay = o.location || '';
-            if (!_locDisplay && o.data && o.data.serviceLocation && typeof o.data.serviceLocation.lat === 'number') {
-                _locDisplay = nearestCityFromCoords(o.data.serviceLocation.lat, o.data.serviceLocation.lng) || '';
-            }
-            _infoHtml = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0;flex-wrap:wrap">'
-                + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('area') + '</span>' + (_area ? (toPersianDigits(_area) + ' \u0647\u06a9\u062a\u0627\u0631') : '\u2014') + '</span>'
-                + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(_locDisplay || '\u2014') + '</span>'
-                + '</div>';
-        }else{
-            const _mt = (o.data && o.data.machineType) ? o.data.machineType : '';
-            _infoHtml = '<div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0">'
-                + '<span class="kelo-icon-inline">' + keloCardIcon('machine') + '</span>' + escapeHtml(_mt || '\u2014')
-                + '</div>';
-        }
-                if(rec && rec.status==='pending'){
-            const _rp = String(rec.proposerId || rec.proposer_id || '');
-            if(_rp !== _myId){
-                action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();rejectIncomingProposal(\''+rec.id+'\',\''+req.id+'\')">رد درخواست</button>';
-            }
-        }
-        const priceLine = o.unitPrice ? fmtNum(o.unitPrice) + (o.priceUnit ? ' '+o.priceUnit : '') : '\u062a\u0648\u0627\u0641\u0642\u06cc';
-        const _showPrice = !_isProvideReq;
-        return '<div class="request-offers-list-item" data-offer-id="'+escapeHtml(o.providerId)+'" onclick="focusOfferOnMap(\''+escapeHtml(o.providerId)+'\')">'
-            +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(_serviceDisplay)+_ratingHtml+'</strong></div>'
-            +'<div class="kelo-card-info-list">'+_infoHtml+'</div>'
-            +(_showPrice ? '<div class="offer-card-price">'+priceLine+'</div>' : '')
-            +'<div class="offer-actions-row single">'+action+'</div>'
-            +'</div>';
-    }).join('') : '<div class="mobile-empty-state">'+(_isProvideReq?'\u06a9\u0634\u0627\u0648\u0631\u0632 \u0648\u0627\u062c\u062f \u0634\u0631\u0627\u06cc\u0637\u06cc \u0628\u0631\u0627\u06cc \u0627\u06cc\u0646 \u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f.':'\u0627\u0631\u0627\u0626\u0647\u200c\u062f\u0647\u0646\u062f\u0647 \u0648\u0627\u062c\u062f \u0634\u0631\u0627\u06cc\u0637\u06cc \u0628\u0631\u0627\u06cc \u0627\u06cc\u0646 \u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f.')+'</div>';
-    let _statPending = 0, _statRejected = 0;
-    currentRecipients.forEach(function(x){ if(x.status==='pending') _statPending++; else if(x.status==='rejected') _statRejected++; });
-    const _firstLabel = _isProvideReq ? '\u06a9\u0634\u0627\u0648\u0631\u0632' : '\u0627\u0631\u0627\u0626\u0647\u200c\u062f\u0647\u0646\u062f\u0647';
-    const _statsHtml = '<div class="kelo-stats-row">'
-        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(candidates.length) + '</div><div class="kelo-stat-lbl">' + _firstLabel + '</div></div>'
-        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(_statPending) + '</div><div class="kelo-stat-lbl">\u062f\u0631 \u0627\u0646\u062a\u0638\u0627\u0631</div></div>'
-        + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(_statRejected) + '</div><div class="kelo-stat-lbl">\u0631\u062f \u0634\u062f\u0647</div></div>'
-        + '</div>';
-    if(_isSameRequest){
-        _existingContent.innerHTML = _statsHtml + providersHtml;
-        requestAnimationFrame(function(){ try{ initOffersMap(req, candidates); }catch(e){ console.warn('initOffersMap refresh failed', e); } });
-        return;
-    }
-    const backdrop = document.createElement('div');
-    backdrop.id = 'keloRequestOffersSheet';
-    backdrop.className = 'mobile-sheet-backdrop';
-    backdrop.dataset.requestId = String(requestId);
-    backdrop.innerHTML = '<div class="mobile-sheet" style="position:relative">'
-        + '<button type="button" class="mobile-sheet-handle"></button>'
-        + '<div class="mobile-sheet-header">'
-        + '<button type="button" class="mobile-sheet-back-btn" onclick="closeRequestOffersSheet()" aria-label="\u0628\u0633\u062a\u0646">'+KELO_BACK_CHEVRON_SVG+'</button>'
-        + '<h2>\u062f\u0631\u062e\u0648\u0627\u0633\u062a \u0647\u0627</h2>'
-        + '<span></span>'
-        + '</div>'
-        + '<div class="mobile-sheet-body" style="position:relative">'
-        + '<div id="keloRequestOffersContent">'
-        + _statsHtml
-        + providersHtml
-        + '</div>'
-        + '<div id="keloOffersMap" style="position:absolute;top:0;left:0;right:0;bottom:0;opacity:0;pointer-events:none;z-index:5;background:#dfe7cc;transition:opacity .2s ease"></div>'
-        + '</div>'
-        + '</div>'
-        + '<button type="button" class="kelo-map-toggle-btn" id="keloMapToggleBtn" onclick="toggleOffersMap()">'
-        + '<span id="keloMapToggleIcon">\uD83D\uDDFA</span>'
-        + '<span id="keloMapToggleText">\u0646\u0645\u0627\u06cc\u0634 \u0646\u0642\u0634\u0647</span>'
-        + '</button>';
-    document.body.appendChild(backdrop);
-    document.body.style.overflow = 'hidden';
-    const mapToken = window._keloOffersMapToken || 0;
-    requestAnimationFrame(() => {
-        if(mapToken !== (window._keloOffersMapToken || 0)) return;
-        initOffersMap(req, candidates);
-    });
-}
-function closeRequestOffersSheet(){
-    const el = document.getElementById('keloRequestOffersSheet');
-    if(el) el.remove();
-    document.body.style.overflow = '';
-    disposeOffersMap();
-    window._keloOffersMarkers = {};
-}
-function toggleOffersMap(){
-    const map = document.getElementById('keloOffersMap');
-    const icon = document.getElementById('keloMapToggleIcon');
-    const text = document.getElementById('keloMapToggleText');
-    if(!map || !icon || !text) return;
-    const isHidden = (map.style.opacity === '0' || map.style.opacity === '' || map.style.opacity === '0.0');
-    if(isHidden){
-        map.style.opacity = '1';
-        map.style.pointerEvents = 'auto';
-        icon.textContent = '\u2715';
-        text.textContent = '\u0628\u0633\u062a\u0646 \u0646\u0642\u0634\u0647';
-        setTimeout(function(){
-            if(window._keloOffersMap){
-                try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
-                try{
-                    if(window._keloOffersMap._keloLastBounds){
-                        window._keloOffersMap.fitBounds(window._keloOffersMap._keloLastBounds, {padding:[40,40], animate:false});
-                    }
-                }catch(e){}
-            }
-        }, 100);
-        setTimeout(function(){
-            if(window._keloOffersMap){
-                try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
-            }
-        }, 400);
-    } else {
-        map.style.opacity = '0';
-        map.style.pointerEvents = 'none';
-        icon.textContent = '\uD83D\uDDFA';
-        text.textContent = '\u0646\u0645\u0627\u06cc\u0634 \u0646\u0642\u0634\u0647';
-    }
-}
+
+
+
+
+
+
+
 function goBackFromOffersMap(){
     closeRequestOffersSheet();
 }
 
-function initOffersMap(req, offers){
-    const token = window._keloOffersMapToken || 0;
-    const el = document.getElementById('keloOffersMap');
-    if(!el || typeof L === 'undefined') return;
-    if(window._keloOffersMap){ try{ window._keloOffersMap.remove(); }catch(e){} }
-    const reqLoc = req.data?.serviceLocation;
-    const hasReqLoc = reqLoc && typeof reqLoc.lat === 'number' && typeof reqLoc.lng === 'number';
-    const center = hasReqLoc ? [reqLoc.lat, reqLoc.lng] : [36.5659, 53.0586];
-    const zoom = hasReqLoc ? 12 : 9;
-    const map = createKeloMap(el, { zoomControl:false, attributionControl:false }, center, zoom);
-    window._keloOffersMarkers = {};
-    const reqIcon = L.divIcon({ className: 'kelo-req-marker', html: '<div style="width:34px;height:34px;background:#78a83f;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 4px 12px rgba(0,0,0,.3);position:relative;"><div style="position:absolute;inset:6px;background:#fff;border-radius:50%;"></div></div>', iconSize: [34, 34], iconAnchor: [17, 34] });
-    L.marker(center, { icon: reqIcon }).addTo(map).bindPopup('<div class="map-card-popup"><strong>📍 محل درخواست</strong></div>');
-    const points = [center];
-    offers.forEach((o, idx) => {
-        let pos = null;
-        if(o.location){ const s = String(o.location).trim(); if(KELO_CITY_COORDS[s]){ pos = KELO_CITY_COORDS[s]; } else { const parts = s.split(/[:\s،,-]+/).map(x=>x.trim()).filter(Boolean); for(const p of parts){ if(KELO_CITY_COORDS[p]){ pos = KELO_CITY_COORDS[p]; break; } } } }
-        if(!pos){ const ang = (idx / Math.max(offers.length, 1)) * Math.PI * 2; pos = [center[0] + Math.cos(ang) * 0.015, center[1] + Math.sin(ang) * 0.015]; }
-        const offerIcon = L.divIcon({ className: 'kelo-offer-marker', html: '<div style="background:#5B9BB5;border:2.5px solid #fff;border-radius:50%;width:36px;height:36px;display:grid;place-items:center;font-weight:900;font-size:15px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.3);">' + toPersianDigits(idx + 1) + '</div>', iconSize: [36, 36], iconAnchor: [18, 18] });
-        const marker = L.marker(pos, { icon: offerIcon }).addTo(map);
-        marker.bindPopup('<div class="map-card-popup"><strong>' + escapeHtml(o.provider || 'ارائه‌دهنده') + '</strong><small>' + escapeHtml(serviceName(o.service)) + '<br>' + (o.total ? formatMoney(o.total) : 'توافقی') + '</small></div>');
-        const markerKey = String(o.providerId);
-        marker.on('click', () => { const item = document.querySelector('.request-offers-list-item[data-offer-id="' + markerKey + '"]'); if(item){ item.scrollIntoView({behavior: 'smooth', block: 'center'}); document.querySelectorAll('.request-offers-list-item').forEach(x => x.classList.remove('active')); item.classList.add('active'); } });
-        window._keloOffersMarkers[markerKey] = marker;
-        points.push(pos);
-    });
-    if(mapToken !== (window._keloOffersMapToken || 0)){ try{ map.remove(); }catch(e){} return; }
-    if(points.length > 1){ try { const b=L.latLngBounds(points).pad(0.25); map._keloLastBounds=b; map.fitBounds(b); } catch(e){} } else if(points.length === 1){ try { map._keloLastBounds=L.latLngBounds(points); } catch(e){} }
-    window._keloOffersMap = map;
-    requestAnimationFrame(() => { try{ map.invalidateSize(true); }catch(e){} });
-    setTimeout(() => { if(mapToken !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 120);
-    setTimeout(() => { if(mapToken !== (window._keloOffersMapToken || 0)) return; try{ map.invalidateSize(true); }catch(e){} }, 380);
-}
-function focusOfferOnMap(offerId){
-    const marker = window._keloOffersMarkers && window._keloOffersMarkers[offerId];
-    if(marker && window._keloOffersMap){ window._keloOffersMap.setView(marker.getLatLng(), Math.max(window._keloOffersMap.getZoom(), 14), { animate: true }); setTimeout(() => { marker.openPopup(); }, 400); }
-    document.querySelectorAll('.request-offers-list-item').forEach(el => el.classList.remove('active'));
-    const item = document.querySelector('.request-offers-list-item[data-offer-id="' + offerId + '"]');
-    if(item) item.classList.add('active');
-}
+
+
 function openMobileNotifications(){
     const pending = (typeof getMyReceivedOffers === 'function')
         ? getMyReceivedOffers()
@@ -2530,7 +1649,7 @@ const backdrop=document.getElementById('mobileAccountBackdrop');
     sheet.innerHTML='<div class="mobile-account-head inner"><button type="button" class="mobile-account-back" onclick="closeMobileAccountSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><h2 class="mobile-account-title">اعلان‌ها</h2><span></span></div><div class="mobile-account-body">'+list+'</div>';
     attachSheetDragOnce(sheet);
 }
-function setMobileSheet(open){ const c=document.getElementById('sidebar'); if(!c)return; c.dataset.mobileSheetOpen=open?'1':'0'; }
+
 function mobileFieldPlaceholder(id,label,type,extra){
     const map={ priceUnit:'واحد قیمت', machineType:'مثلاً کمباین کلاس لکسیون ۶۳۰', capacity:'مثلاً ۴ تن در ساعت', price:'مثلاً 3000000', note:'توضیحات خود را وارد کنید', serviceLocation:'موقعیت زمین', activityArea:'محدوده فعالیت', dateStart:'تاریخ شروع', dateEnd:'تاریخ پایان', area:'مساحت' };
     return map[id] || (type==='textarea'?'توضیحات':label);
@@ -2575,7 +1694,7 @@ function openMobileSelect(id){
     if(!backdrop){ backdrop = document.createElement('div'); backdrop.id='keloSelectSheet'; backdrop.className='mobile-sheet-backdrop level3'; document.body.appendChild(backdrop); }
     backdrop.innerHTML = '<div class="mobile-sheet picker">'+html+'</div>';
 }
-function closeMobileSelectSheet(){ const el=document.getElementById('keloSelectSheet'); if(el) el.remove(); }
+
 function chooseMobileSelect(id,value){ wizard.data[id]=value; clearFieldError(id); saveWizardDraftDebounced(); closeMobileSelectSheet(); if(wizard.formSheetOpen) renderMobileFormSheet(); }
 function renderMobileField(field){
     const [id,label,type,extra,required]=field;
@@ -2650,105 +1769,13 @@ function validateMobileField(field){
     if(type==='areaSlider' && required && (!Number(v) || Number(v)<=0)){ showFieldError(id, 'لطفاً '+label+' را مشخص کنید.'); return false; }
     return true;
 }
-function renderMapLocationField(id,label,req,help,mobile){
-    const loc=wizard.data[id]; const has=loc && typeof loc.lat==='number' && typeof loc.lng==='number';
-    if(mobile){
-        const inner = has
-            ? '<div class="mobile-inline-map-preview" id="inlineMap_'+escapeHtml(id)+'"><div class="kelo-map-city-chip" id="inlineMapCityChip"></div></div>'
-            : '<div class="mobile-inline-map-inner"><svg viewBox="0 0 24 24"><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3" fill="#fff"/></svg><span class="mobile-inline-map-text">انتخاب موقعیت روی نقشه</span></div>';
-        return '<div class="sidebar-field map-location-field-mobile"><label>'+escapeHtml(label)+(req?' <span style="color:red">*</span>':'')+'</label><button type="button" class="mobile-inline-map" onclick="activateMapPicker()" aria-label="باز کردن نقشه">'+inner+'</button><div class="mobile-inline-map-value">'+(has?'✓ موقعیت زمین انتخاب شد':'روی نقشه ضربه بزنید و موقعیت زمین را مشخص کنید')+'</div></div>';
-    }
-    return '<div class="sidebar-field"><label>'+label+(req?' <span style="color:red">*</span>':'')+'</label><div class="sidebar-map-action"><div><strong>'+(has?'✓ انتخاب شده':'📍 محل زمین')+'</strong></div><button type="button" class="btn btn-outline" onclick="activateMapPicker()">'+(has?'تغییر':'انتخاب')+'</button></div></div>';
-}
-function initializeInlineLocationMap(){
-    const el=document.getElementById('inlineMap_serviceLocation');
-    if(!el || typeof L==='undefined') return;
-    if(window._keloInlineMap){ try{window._keloInlineMap.remove();}catch(e){} }
-    const loc=wizard.data.serviceLocation;
-    const center=loc&&typeof loc.lat==='number' ? [loc.lat,loc.lng] : [36.5659,53.0586];
-    const zoom=loc&&typeof loc.lat==='number' ? 14 : 9;
-    const map=createKeloMap(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,touchZoom:false},center,zoom);
-    if(loc&&typeof loc.lat==='number'){ L.marker([loc.lat,loc.lng]).addTo(map); var _ch=document.getElementById('inlineMapCityChip'); if(_ch){ _ch.textContent=locationLabelFromCoords(loc.lat,loc.lng); _ch.style.display='inline-flex'; } }
-    window._keloInlineMap=map;
-    setTimeout(()=>map.invalidateSize(),50);
-}
-function openMobileMapPickerOverlay(){
-    clearKeloPickerGpsVisuals();
-    const existing = document.getElementById('keloMobileMapPickerOverlay');
-    if(existing) existing.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'keloMobileMapPickerOverlay';
-    overlay.className = 'mobile-location-picker-backdrop';
-    const pinSvg = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3" fill="#fff"/></svg>';
-    const gpsSvg = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>';
-    const isBrandMode = !!wizard._profileMapMode;
-    const confirmBtnClass = isBrandMode ? 'btn is-brand' : 'btn';
-    overlay.innerHTML = '<div class="mobile-location-picker-sheet"><div class="mobile-location-picker-head"><button type="button" id="keloMapPickerClose" aria-label="بازگشت" style="justify-self:end">'+KELO_BACK_CHEVRON_SVG+'</button><strong>انتخاب موقعیت زمین</strong><span></span></div><div class="mobile-location-picker-map-wrap"><div id="mobileLocationPickerMap"></div><div class="kelo-map-search-wrap"><div class="kelo-map-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="keloMapSearchInput" placeholder="جستجوی شهر یا آدرس..."></div></div><div class="kelo-map-center-pin">'+pinSvg+'</div><button type="button" class="kelo-map-gps-btn" id="keloMapGpsBtn" aria-label="موقعیت من">'+gpsSvg+'</button></div><div class="mobile-location-picker-footer"><button type="button" class="'+confirmBtnClass+'" id="keloMapPickerConfirmBtn">'+pinSvg+'<span>تأیید موقعیت</span></button></div></div>';
-    document.body.appendChild(overlay);
-    document.getElementById('keloMapPickerClose').addEventListener('click', closeMobileLocationPicker);
-    document.getElementById('keloMapPickerConfirmBtn').addEventListener('click', confirmMobileLocationPicker);
-    document.getElementById('keloMapGpsBtn').addEventListener('click', useMyLocationForPicker);
-    const searchInput = document.getElementById('keloMapSearchInput');
-    if(searchInput){
-        let searchTimer = null;
-        searchInput.addEventListener('input', function(){
-            clearTimeout(searchTimer);
-            const q = this.value.trim();
-            if(q.length < 3) return;
-            searchTimer = setTimeout(() => geocodeMapSearch(q), 600);
-        });
-    }
-    document.body.style.overflow = 'hidden';
-    setTimeout(function(){ initializeMobileLocationPicker(); }, 80);
-}
+
+
+
 let keloNominatimLastRequestAt = 0;
 let keloNominatimQueueTimer = null;
 let keloNominatimController = null;
-function geocodeMapSearch(query){
-    if(!window._keloMobilePickerMap) return;
-    const normalized = String(query || '').trim();
-    if(normalized.length < 3) return;
-    const cacheKey = 'kelo_nominatim_' + normalized.toLowerCase();
-    try{
-        const cached = localStorage.getItem(cacheKey);
-        if(cached){
-            const data = JSON.parse(cached);
-            if(data && data.length){
-                const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
-                if(Number.isFinite(lat) && Number.isFinite(lng) && window._keloMobilePickerMap){
-                    window._keloMobilePickerMap.setView([lat, lng], 15);
-                    wizard._pendingMapPoint = { lat: lat, lng: lng };
-                    updateMobilePickerFooter();
-                    return;
-                }
-            }
-        }
-    }catch(e){}
 
-    const wait = Math.max(0, 1100 - (Date.now() - keloNominatimLastRequestAt));
-    clearTimeout(keloNominatimQueueTimer);
-    keloNominatimQueueTimer = setTimeout(function(){
-        if(!window._keloMobilePickerMap) return;
-        keloNominatimLastRequestAt = Date.now();
-        if(keloNominatimController){ try{ keloNominatimController.abort(); }catch(e){} }
-        keloNominatimController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-        const url='https://nominatim.openstreetmap.org/search?format=json&accept-language=fa&limit=1&q=' + encodeURIComponent(normalized);
-        fetch(url, keloNominatimController ? {signal:keloNominatimController.signal} : undefined)
-            .then(r => { if(!r.ok) throw new Error('Nominatim HTTP '+r.status); return r.json(); })
-            .then(data => {
-                if(data && data.length){
-                    const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
-                    if(Number.isFinite(lat) && Number.isFinite(lng) && window._keloMobilePickerMap){
-                        try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-                        window._keloMobilePickerMap.setView([lat, lng], 15);
-                        wizard._pendingMapPoint = { lat: lat, lng: lng };
-                        updateMobilePickerFooter();
-                    }
-                }
-            })
-            .catch(err => { if(err && err.name !== 'AbortError') console.warn('KELO geocode failed:', err); });
-    }, wait);
-}
 function getKeloCurrentPosition(onSuccess, onError){
     if(!navigator.geolocation){
         if(onError) onError({code:0, message:'Geolocation is not supported'});
@@ -2767,46 +1794,9 @@ function getKeloCurrentPosition(onSuccess, onError){
     }, opts);
     run({enableHighAccuracy:false, timeout:12000, maximumAge:0});
 }
-function clearKeloPickerGpsVisuals(){
-    if(window._keloPickerGpsMarker){ try{ window._keloPickerGpsMarker.remove(); }catch(e){} window._keloPickerGpsMarker=null; }
-    if(window._keloPickerGpsAccuracy){ try{ window._keloPickerGpsAccuracy.remove(); }catch(e){} window._keloPickerGpsAccuracy=null; }
-}
-function updateKeloPickerCityChip(lat,lng){
-    const chip=document.getElementById('keloMapCityChip');
-    if(!chip) return;
-    const label = locationLabelFromCoords(Number(lat), Number(lng));
-    chip.textContent = label;
-    chip.style.display = 'inline-flex';
-}
-function useMyLocationForPicker(){
-    if(!window._keloMobilePickerMap || !navigator.geolocation){
-        showToast('مرورگر شما از موقعیت مکانی پشتیبانی نمی‌کند.','error');
-        return;
-    }
-    const btn=document.getElementById('keloMapGpsBtn');
-    const restoreButton=function(){ if(btn){ btn.disabled=false; btn.style.opacity=''; } };
-    if(btn){ btn.disabled=true; btn.style.opacity='.55'; }
-    getKeloCurrentPosition(function(pos){
-        restoreButton();
-        const lat=Number(pos.coords.latitude), lng=Number(pos.coords.longitude);
-        const accuracy=Number(pos.coords.accuracy)||0;
-        if(!Number.isFinite(lat)||!Number.isFinite(lng)||!window._keloMobilePickerMap) return;
-        clearKeloPickerGpsVisuals();
-        window._keloPickerGpsAccuracy=L.circle([lat,lng],{radius:accuracy||35,color:'#4A9DB8',weight:1,fillColor:'#4A9DB8',fillOpacity:.12}).addTo(window._keloMobilePickerMap);
-        window._keloPickerGpsMarker=L.circleMarker([lat,lng],{radius:8,color:'#fff',weight:3,fillColor:'#4A9DB8',fillOpacity:1}).addTo(window._keloMobilePickerMap).bindPopup('<div class="map-card-popup"><strong>📍 موقعیت فعلی شما</strong></div>');
-        window._keloMobilePickerMap.setView([lat,lng],16,{animate:true});
-        wizard._pendingMapPoint={lat,lng};
-        updateKeloPickerCityChip(lat,lng);
-        updateMobilePickerFooter();
-    },function(err){
-        restoreButton();
-        let msg='دسترسی به موقعیت ممکن نبود.';
-        if(err && err.code===1) msg='دسترسی موقعیت مکانی رد شده است؛ مجوز Location را برای سایت فعال کنید.';
-        else if(err && err.code===2) msg='موقعیت مکانی قابل تشخیص نیست. GPS یا Location را روشن کنید.';
-        else if(err && err.code===3) msg='دریافت موقعیت بیش از حد طول کشید. دوباره امتحان کنید.';
-        showToast(msg,'error');
-    });
-}
+
+
+
 function autoDetectProfileLocation(mode){
     if(mode!=='first' && mode!=='edit') return;
     if(wizard._profileAutoGeoRequested) return;
@@ -2827,151 +1817,16 @@ function autoDetectProfileLocation(mode){
         console.warn('KELO profile geolocation unavailable:',err);
     });
 }
-function closeMobileMapPickerOverlay(){
-    if(keloNominatimQueueTimer){ clearTimeout(keloNominatimQueueTimer); keloNominatimQueueTimer=null; }
-    if(keloNominatimController){ try{ keloNominatimController.abort(); }catch(e){} keloNominatimController=null; }
-    const overlay = document.getElementById('keloMobileMapPickerOverlay');
-    if(overlay) overlay.remove();
-    if(window._keloMobilePickerMap){ try{ window._keloMobilePickerMap.remove(); }catch(e){} window._keloMobilePickerMap = null; }
-    clearKeloPickerGpsVisuals();
-    document.body.style.overflow = '';
-}
-function updateMobilePickerFooter(){
-    const btn = document.getElementById('keloMapPickerConfirmBtn');
-    if(!btn) return;
-    btn.disabled = !wizard._pendingMapPoint;
-}
-function initializeMobileLocationPicker(){
-    const el = document.getElementById('mobileLocationPickerMap');
-    if(!el || typeof L === 'undefined') return;
-    if(window._keloMobilePickerMap){ try{ window._keloMobilePickerMap.remove(); }catch(e){} window._keloMobilePickerMap = null; }
-    const loc = wizard._pendingMapPoint || wizard.data.serviceLocation;
-    const hasLoc = loc && typeof loc.lat === 'number' && typeof loc.lng === 'number';
-    const center = hasLoc ? [loc.lat, loc.lng] : [36.5659, 53.0586];
-    const zoom = hasLoc ? 15 : 10;
-    const map = createKeloMap(el, { zoomControl:false, attributionControl:false }, center, zoom);
-    if(hasLoc) wizard._pendingMapPoint = { lat: loc.lat, lng: loc.lng };
-    else wizard._pendingMapPoint = { lat: center[0], lng: center[1] };
-    map.on('move', function(){ const c = map.getCenter(); wizard._pendingMapPoint = { lat: c.lat, lng: c.lng }; updateKeloPickerCityChip(c.lat,c.lng); });
-    map.on('moveend', updateMobilePickerFooter);
-    map.whenReady(function(){
-        const c = map.getCenter();
-        wizard._pendingMapPoint = { lat: c.lat, lng: c.lng };
-        updateKeloPickerCityChip(c.lat,c.lng);
-        updateMobilePickerFooter();
-    });
-    window._keloMobilePickerMap = map;
-    setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 100);
-    setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 350);
-    updateMobilePickerFooter();
-}
-function activateMapPicker(){
-    wizard.mapPickMode = true;
-    wizard._pendingMapPoint = wizard.data.serviceLocation ? cloneObject(wizard.data.serviceLocation) : null;
-    openMobileMapPickerOverlay();
-}
-function closeMobileLocationPicker(){
-    wizard.mapPickMode = false;
-    wizard._profileMapMode = false;
-    wizard._pendingMapPoint = null;
-    closeMobileMapPickerOverlay();
-    if(wizard.formSheetOpen){ renderMobileFormSheet(); } else { renderWizard(); }
-}
-function confirmMobileLocationPicker(){
-    if(wizard._pendingMapPoint && typeof wizard._pendingMapPoint.lat === 'number'){
-        if(wizard._profileMapMode){
-            const mode = wizard._profileMapMode;
-            const nearest = nearestCityFromCoords(wizard._pendingMapPoint.lat, wizard._pendingMapPoint.lng);
-            const province = provinceFromCity(nearest);
-            wizard._pendingProfileLocation = Object.assign({}, wizard._pendingMapPoint, { city: nearest, province: province });
-            wizard._profileMapMode = false;
-            wizard._pendingMapPoint = null;
-            closeMobileMapPickerOverlay();
-            if(mode === 'first'){
-                showCompleteProfile();
-            } else if(document.getElementById('mobileAccountSheet')){
-                renderMobileAccountSection('edit');
-            }
-            return;
-        } else {
-            var _pt = wizard._pendingMapPoint;
-            var _city = nearestCityFromCoords(_pt.lat, _pt.lng);
-            wizard.data.serviceLocation = Object.assign({}, _pt, {
-                source: 'map',
-                city: _city || null,
-                province: _city ? provinceFromCity(_city) : null,
-                label: locationLabelFromCoords(_pt.lat, _pt.lng)
-            });
-        }
-    }
-    wizard.mapPickMode = false;
-    wizard._pendingMapPoint = null;
-    closeMobileMapPickerOverlay();
-    clearFieldError('serviceLocation');
-    saveWizardDraft();
-    if(wizard.formSheetOpen){ renderMobileFormSheet(); } else { renderWizard(); }
-}
-function useMapLocation(lat,lng){wizard.data.serviceLocation={lat:Number(lat),lng:Number(lng),source:'map'};wizard.mapPickMode=false;wizard._pendingMapPoint=null;renderWizard();}
-function createKeloMap(el, options={}, center=null, zoom=null){
-    if(!el || typeof L === 'undefined') return null;
 
-    // Keep the existing map callers/options intact. Use the official OSM
-    // raster tiles when the app is hosted normally, but provide a safe raster
-    // fallback for local file:// testing and for environments that block the
-    // OSM tile request before the page can render. Attribution stays visible.
-    const opts = Object.assign({}, options || {}, { attributionControl: true });
-    if(center){ opts.center = center; }
-    if(zoom !== null && zoom !== undefined){ opts.zoom = zoom; }
 
-    const map = L.map(el, opts);
-    const osmUrl='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const cartoUrl='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-    const osmAttribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>';
-    const cartoAttribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>';
 
-    let layer;
-    let fallbackStarted=false;
-    let errorWindowStart=0;
-    let errorCount=0;
 
-    const addCartoFallback=function(){
-        if(fallbackStarted) return;
-        fallbackStarted=true;
-        try{ if(layer) map.removeLayer(layer); }catch(e){}
-        layer=L.tileLayer(cartoUrl,{
-            maxZoom:19,
-            subdomains:'abcd',
-            detectRetina:true,
-            attribution:cartoAttribution
-        }).addTo(map);
-    };
 
-    const isLocalFile = typeof window !== 'undefined' && window.location && window.location.protocol === 'file:';
-    if(isLocalFile){
-        addCartoFallback();
-    }else{
-        layer=L.tileLayer(osmUrl,{
-            maxZoom:19,
-            maxNativeZoom:19,
-            detectRetina:true,
-            attribution:osmAttribution,
-            referrerPolicy:'strict-origin-when-cross-origin'
-        }).addTo(map);
-        layer.on('tileerror',function(){
-            if(fallbackStarted) return;
-            const now=Date.now();
-            if(!errorWindowStart || now-errorWindowStart>2500){ errorWindowStart=now; errorCount=0; }
-            errorCount++;
-            if(errorCount>=3) addCartoFallback();
-        });
-    }
-    return map;
-}
 
-function ensureKeloMapView(map, center, zoom){
-    if(!map || !center) return;
-    if(typeof map.setView === 'function') map.setView(center, zoom ?? map.getZoom?.() ?? 13);
-}
+
+
+
+
 
 let keloMap=null,keloUserMarker=null,keloAccuracy=null,keloPickMarker=null,keloLocationWatch=null;
 const KELO_CITY_COORDS={
@@ -2991,44 +1846,12 @@ const KELO_CITY_COORDS={
 };
 // سقف فاصله (کیلومتر) برای قبول برچسب شهر — جلو اشتباه تنکابن→رامسر و مشابه
 const KELO_CITY_MAX_DIST_KM = 12;
-function coordForCity(city){
-    if(city && KELO_CITY_COORDS[city]) return KELO_CITY_COORDS[city];
-    return null;
-}
+
 function geoDistanceKm(a,b){ if(!a||!b)return Infinity; const toRad=x=>x*Math.PI/180, R=6371; const dLat=toRad(b[0]-a[0]), dLng=toRad(b[1]-a[1]); const s=Math.sin(dLat/2)**2+Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(s)); }
 function requestMatchesActivityArea(request,area){ if(!Array.isArray(area)||!area.length)return false; const reqLoc=request?.data?.serviceLocation; let reqPoint=reqLoc?.lat?[reqLoc.lat,reqLoc.lng]:null; if(!reqPoint && request?.data?.city) reqPoint=coordForCity(request.data.city); if(!reqPoint) return true; return area.some(row=>{ const cities=row.all?(KELO_GEOGRAPHY[row.province]||[]):(row.cities||[]); if(!cities.length) return true; return cities.some(city=>geoDistanceKm(reqPoint,coordForCity(city))<=50); }); }
-function initializeKeloMap(){
-    const el=document.getElementById('keloMap'); if(!el) return;
-    if(typeof L==='undefined'){ el.innerHTML = '<div style="display:grid;place-items:center;height:100%;color:#c0392b;font-weight:700;padding:20px;text-align:center">خطا در بارگذاری نقشه</div>'; return; }
-    if(keloLocationWatch!==null && navigator.geolocation){ try{navigator.geolocation.clearWatch(keloLocationWatch);}catch(e){} }
-    keloLocationWatch=null; keloUserMarker=null; keloAccuracy=null; keloPickMarker=null; window._keloUserCentered=false;
-    if(keloMap){keloMap.remove();keloMap=null;}
-    keloMap=createKeloMap(el,{zoomControl:true},[32.4279,53.6880],5);
-    if(!keloMap) return;
-    if(mapContext?.target?.lat)keloMap.setView([mapContext.target.lat,mapContext.target.lng],12);
-    if(wizard.mapPickMode)keloMap.on('click',e=>useMapLocation(e.latlng.lat,e.latlng.lng));
-    renderMapContextMarkers();
-    if(!mapContext?.target?.lat && navigator.geolocation){
-        navigator.geolocation.getCurrentPosition(function(pos){
-            const lat=Number(pos.coords.latitude), lng=Number(pos.coords.longitude);
-            if(!Number.isFinite(lat)||!Number.isFinite(lng)||!keloMap) return;
-            if(keloUserMarker){try{keloUserMarker.remove();}catch(e){}}
-            keloUserMarker=L.circleMarker([lat,lng],{radius:8,color:'#fff',weight:3,fillColor:'#4A9DB8',fillOpacity:1}).addTo(keloMap)
-                .bindPopup('<div class="map-card-popup"><strong>📍 موقعیت شما</strong></div>');
-            keloMap.setView([lat,lng],14,{animate:true});
-            window._keloUserCentered=true;
-        },function(err){ console.warn('Geolocation unavailable',err); },{enableHighAccuracy:true,timeout:8000,maximumAge:60000});
-    }
-    requestAnimationFrame(()=>{ try{keloMap.invalidateSize(true);}catch(e){} });
-    setTimeout(()=>{ try{keloMap.invalidateSize(true);}catch(e){} },250);
-}
 
-function renderMapContextMarkers(){
-    if(!keloMap)return;
-    if(mapContext?.target?.lat)L.marker([mapContext.target.lat,mapContext.target.lng]).addTo(keloMap).bindPopup('<div class="map-card-popup"><strong>📍 محل خدمت</strong></div>').openPopup();
-    if(mapContext?.type==='receive'){ db.machines.filter(m=>m.services&&m.services[mapContext.service]!==undefined).forEach((m)=>{const pos=coordForCity(m.location);L.marker(pos).addTo(keloMap).bindPopup('<div class="map-card-popup"><strong>🚜 '+escapeHtml(m.owner)+'</strong></div>');}); }
-    else if(mapContext?.type==='provide'){ db.requests.filter(r=>r.status==='pending'&&r.service===mapContext.service&&r.userId!==currentUser.id&&requestMatchesActivityArea(r,mapContext.activityArea||[])).forEach(r=>{let pos=r.data?.serviceLocation?.lat?[r.data.serviceLocation.lat,r.data.serviceLocation.lng]:coordForCity(r.data?.city||'ساری');L.circleMarker(pos,{radius:8,color:'#fff',weight:3,fillColor:'#d7aa43',fillOpacity:1}).addTo(keloMap).bindPopup('<div class="map-card-popup"><strong>👨‍🌾 '+escapeHtml(serviceName(r.service))+'</strong></div>');}); }
-}
+
+
 const JALALI_MONTH_NAMES=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
 const JALALI_WEEK_NAMES=['شنبه','یکشنبه','دوشنبه','سه‌شنبه','چهارشنبه','پنجشنبه','جمعه'];
 const jalaliPartsFormatter=new Intl.DateTimeFormat('en-US-u-ca-persian-nu-latn',{year:'numeric',month:'numeric',day:'numeric'});
@@ -3305,100 +2128,16 @@ function renderActivityAreaField(id, label, req, mobile){
         : '<span class="trigger-placeholder">محدوده فعالیت</span>';
     return '<div class="sidebar-field"><label>'+escapeHtml(label)+(req?' <span style="color:red">*</span>':'')+'</label><button type="button" class="mobile-choice-trigger" onclick="openActivityAreaSheet()"><span style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">'+triggerValue+'</span><span class="kelo-inline-chevron"><i class="kelo-chevron left"></i></span></button></div>';
 }
-function isActivitySheetOpen(){ return !!document.getElementById('keloActivityAreaSheet'); }
+
 function refreshActivityAreaUI(){
     if(isActivitySheetOpen()){ renderActivityAreaSheet(); }
     else if(wizard.formSheetOpen){ renderMobileFormSheet(); }
     else { renderWizard(); }
 }
-function openActivityAreaSheet(){
-    wizard.activityProvince = '';
-    wizard.activitySearch = '';
-    wizard.activityOpen = true;
-    renderActivityAreaSheet();
-}
-function closeActivityAreaSheet(){
-    wizard.activityOpen = false;
-    wizard.activityProvince = '';
-    wizard.activitySearch = '';
-    const el = document.getElementById('keloActivityAreaSheet');
-    if(el) el.remove();
-    if(wizard.formSheetOpen) renderMobileFormSheet();
-}
-function renderActivityAreaSheet(){
-    let backdrop = document.getElementById('keloActivityAreaSheet');
-    if(!backdrop){
-        backdrop = document.createElement('div');
-        backdrop.id='keloActivityAreaSheet';
-        backdrop.className='mobile-sheet-backdrop level3';
-        document.body.appendChild(backdrop);
-    }
 
-    const saved = getActivityAreaRows();
-    const selectedProvince = wizard.activityProvince || '';
-    const cities = selectedProvince ? (KELO_GEOGRAPHY[selectedProvince]||[]) : [];
-    const row = saved.find(x=>x.province===selectedProvince) || {province:selectedProvince,cities:[],all:false};
-    const selectedCities = Array.isArray(row.cities)?row.cities:[];
-    const allSelected = !!row.all;
-    const search = (wizard.activitySearch||'').trim().toLowerCase();
-    const filteredCities = search ? cities.filter(c=>c.toLowerCase().includes(search)) : cities;
 
-    let selectionChips = '';
-    if(saved.length){
-        selectionChips = saved.map(savedRow=>{
-            if(savedRow.all) return '<span class="activity-city-chip">'+escapeHtml(savedRow.province)+': همه <button type="button" onclick="removeActivityProvince(\''+escapeHtml(savedRow.province)+'\')">×</button></span>';
-            return (savedRow.cities||[]).map(city=>'<span class="activity-city-chip">'+escapeHtml(savedRow.province)+': '+escapeHtml(city)+' <button type="button" onclick="removeActivityCity(\''+escapeHtml(savedRow.province)+'\',\''+escapeHtml(city)+'\')">×</button></span>').join('');
-        }).join('');
-    }
 
-    const searchHtml = '<div class="mobile-sheet-search-wrap"><div class="mobile-sheet-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="'+(selectedProvince?'جستجوی شهرستان...':'جستجوی استان...')+'" value="'+escapeHtml(wizard.activitySearch||'')+'" oninput="'+(selectedProvince?'filterActivityCities(this.value)':'filterActivityProvinces(this.value)')+'"></div></div>';
 
-    let contentHtml = '';
-    if(selectedProvince){
-        const cityOptions = filteredCities.map(city=>{
-            const checked = allSelected || selectedCities.includes(city);
-            return '<label class="activity-city-option"><input type="checkbox" '+(checked?'checked':'')+' onchange="toggleActivityCity(\''+escapeHtml(selectedProvince)+'\',\''+escapeHtml(city)+'\',this.checked)"><span>'+escapeHtml(city)+'</span></label>';
-        }).join('');
-        contentHtml = searchHtml
-            + '<button type="button" class="activity-back-option" onclick="backToActivityProvinces(event)"><i class="kelo-chevron right"></i> بازگشت به استان‌ها</button>'
-            + '<div class="activity-city-checklist">'
-            +   '<label class="activity-city-option all-cities"><input type="checkbox" '+(allSelected?'checked':'')+' onchange="toggleAllCities(\''+escapeHtml(selectedProvince)+'\',this.checked)"><span>همه شهرستان‌ها</span></label>'
-            +   (cityOptions || '<div class="activity-empty">یافت نشد.</div>')
-            + '</div>';
-    } else {
-        const provinceOptions = renderActivityProvinceOptions(search);
-        contentHtml = searchHtml + '<div class="activity-province-list">'+provinceOptions+'</div>';
-    }
-
-    const chipsHtml = selectionChips ? '<div class="activity-selection-chips">'+selectionChips+'</div>' : '';
-
-    const html = '<button type="button" class="mobile-sheet-handle"></button>'
-        + '<div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closeActivityAreaSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><h2>محدوده فعالیت</h2><span></span></div>'
-        + '<div class="mobile-sheet-body">'
-        +   chipsHtml
-        +   contentHtml
-        + '</div>'
-        + '<div class="mobile-sheet-footer"><button type="button" class="btn btn-primary" onclick="confirmActivityAreaSheet()" '+(saved.length?'':'disabled')+'>تأیید</button></div>';
-
-    let sheet = backdrop.querySelector('.mobile-sheet');
-    if(!sheet){
-        sheet = document.createElement('div');
-        sheet.className = 'mobile-sheet picker';
-        backdrop.appendChild(sheet);
-    }
-    sheet.innerHTML = html;
-}
-function confirmActivityAreaSheet(){
-    if(!getActivityAreaRows().length) return;
-    wizard.activityOpen = false;
-    wizard.activityProvince = '';
-    wizard.activitySearch = '';
-    clearFieldError('activityArea');
-    saveWizardDraft();
-    const el = document.getElementById('keloActivityAreaSheet');
-    if(el) el.remove();
-    if(wizard.formSheetOpen) renderMobileFormSheet();
-}
 function renderActivityProvinceOptions(query){
     const q=String(query||'').trim().toLowerCase();
     return Object.entries(KELO_GEOGRAPHY).filter(([p])=>!q || p.toLowerCase().includes(q)).map(([province,cities])=>{ const has=activityProvinceHasSelection(province); return '<button type="button" class="activity-province-option" onclick="chooseActivityProvince(\''+escapeHtml(province)+'\')"><span>'+escapeHtml(province)+'</span><span class="province-count">'+(has?'✓ ':'')+toPersianDigits(cities.length)+' شهرستان</span></button>'; }).join('') || '<div class="activity-empty">استانی پیدا نشد.</div>';
@@ -3443,46 +2182,7 @@ function renderWizard(){
 function syncWizardFieldValue(element){ if(!element || !element.dataset || !element.dataset.wizardField || !wizard || !wizard.data)return; if(element.type==='file')return; wizard.data[element.dataset.wizardField]=element.value; saveWizardDraftDebounced(); }
 document.addEventListener('input', function(e){ syncWizardFieldValue(e.target); });
 document.addEventListener('change', function(e){ syncWizardFieldValue(e.target); });
-async function finalizeWizard(){
-    if(!currentUser)return;
-    let savedType = wizard.type, savedService = wizard.service, newId = null;
-    const data = cloneObject(wizard.data);
-    if(data.dateStart) data.date = data.dateStart;
-    const requestKind = savedType === 'provide' ? 'provide' : 'need';
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            // Both Need and Provide are Requests. The requestKind is the only
-            // business distinction; do not route Provide through listings.
-            const result = await window.KeloBackend.createRequest(savedService,data,requestKind);
-            applyServerSnapshot(result); newId=result.id;
-        }catch(err){ showToast((err&&err.body&&err.body.error)||'ذخیره اطلاعات روی سرور انجام نشد.','error'); return; }
-    } else {
-        const request={
-            id:"r"+Date.now()+Math.random().toString(36).slice(2,6),
-            userId:currentUser.id,
-            requesterName:currentUser.name,
-            requestKind:requestKind,
-            service:savedService,
-            data:data,
-            status:"pending",
-            created:new Date().toISOString()
-        };
-        db.requests.push(request); saveDB(); newId = request.id;
-        mapContext={
-            type:savedType,
-            service:savedService,
-            target:savedType==='receive' ? (wizard.data.serviceLocation||null) : null,
-            activityArea:savedType==='provide' ? (wizard.data.activityArea||[]) : undefined,
-            requestId:request.id
-        };
-    }
-    clearWizardDraft();
-    mobileRequestSuccess = true;
-    mobileSuccessData = { type: savedType, service: savedService, id: newId, ts: Date.now() };
-    try{ sessionStorage.setItem('kelo_mobile_success', JSON.stringify(mobileSuccessData)); }catch(e){}
-    setMobileTab('request');
-    resetMobileWizardFlow();
-}
+
 function getRequestDateRange(request){
     const start=parseStoredDate(request?.data?.dateStart || request?.data?.date);
     const end=parseStoredDate(request?.data?.dateEnd || request?.data?.dateStart || request?.data?.date) || start;
@@ -3516,57 +2216,64 @@ function getProviderIdentityFromListing(listing){
     };
 }
 function hasActiveProposalForRequest(requestId, userA, userB){
+    if (window.KeloDomain && window.KeloDomain.proposal && window.KeloDomain.proposal.hasActiveProposalBetween) {
+        return window.KeloDomain.proposal.hasActiveProposalBetween(db.requestRecipients, db.requests, requestId, userA, userB);
+    }
     if(!requestId || !userA || !userB) return false;
     const a = String(userA);
     const b = String(userB);
     if(a === b) return false;
-
     return db.requestRecipients.some(function(rec){
         if(String(rec.requestId) !== String(requestId)) return false;
         if(rec.status !== 'pending' && rec.status !== 'accepted') return false;
-
-        const relatedRequest = db.requests.find(function(r){
-            return String(r.id) === String(requestId);
-        });
+        const relatedRequest = db.requests.find(function(r){ return String(r.id) === String(requestId); });
         if(!relatedRequest) return false;
-
         const proposerId = rec.proposerId || relatedRequest.userId;
         const recipientId = rec.recipientId || rec.providerId;
         if(!proposerId || !recipientId) return false;
-
         const p = String(proposerId);
         const r = String(recipientId);
         return (p === a && r === b) || (p === b && r === a);
     });
 }
 function getEligibleProvidersForRequest(request){
+    if (window.KeloDomain && window.KeloDomain.eligibility && window.KeloDomain.eligibility.getEligibleProviders) {
+        return window.KeloDomain.eligibility.getEligibleProviders({
+            request: request,
+            listings: db.listings || [],
+            machines: db.machines || [],
+            users: db.users || [],
+            bookings: db.bookings || [],
+            parseDate: parseStoredDate,
+            geo: {
+                nearestCityFromCoords: typeof nearestCityFromCoords === 'function' ? nearestCityFromCoords : null,
+                provinceFromCity: typeof provinceFromCity === 'function' ? provinceFromCity : null,
+                formatActivityArea: typeof formatActivityArea === 'function' ? formatActivityArea : null
+            }
+        });
+    }
     if(!request) return [];
     const {start,end}=getRequestDateRange(request);
     const seen=new Set();
     const result=[];
-
     db.listings
       .filter(l=>l.status==='active' && l.userId!==request.userId && l.service===request.service)
       .forEach(l=>{
           if(!listingMatchesRequest(l,request)) return;
           if(!listingAvailableForRequest(l, start, end)) return;
           if(start && hasProviderBookingConflict(l.userId, l.id, start, end)) return;
-          // Do NOT filter out providers with an active proposal here.
-          // They must remain in the list so the sheet can show «لغو ارسال».
           const p=getProviderIdentityFromListing(l);
           const key=p.providerId+'|'+(p.listingId||'');
           if(seen.has(key)) return;
           seen.add(key);
           result.push(p);
       });
-
     db.machines
       .filter(m=>m.services && m.services[request.service]!==undefined)
       .forEach(m=>{
           const ownerUser=db.users.find(u=>u.name===m.owner);
           const providerId=ownerUser?.id || ('machine-owner:'+m.owner);
           if(providerId===request.userId) return;
-          // Keep providers with pending send in the list (button toggles to cancel).
           const machineKey='machine:'+m.id;
           if(seen.has(providerId+'|'+machineKey)) return;
           if(start && hasProviderBookingConflict(providerId, machineKey, start, end)) return;
@@ -3584,7 +2291,6 @@ function getEligibleProvidersForRequest(request){
               data:{price:Number(m.services[request.service])||0,priceUnit:'تومان / هکتار'}
           });
       });
-
     return result;
 }
 function hasProviderBookingConflict(providerId, machineId, start, end){
@@ -3625,6 +2331,10 @@ function listingMatchesRequest(listing,request){
 }
 function formatActivityArea(area){ if(!Array.isArray(area)||!area.length)return '—'; return area.map(x=>x.all||!x.cities?.length?x.province:x.province+': '+x.cities.join('، ')).join(' | '); }
 function calculateTotal(request,data,fallbackPrice){
+    if (window.KeloDomain && window.KeloDomain.pricing && window.KeloDomain.pricing.calculateTotal) {
+        // Prefer domain; for day-based pricing use app parseStoredDate via temporary override on data
+        return window.KeloDomain.pricing.calculateTotal(request, data, fallbackPrice);
+    }
     const price = Number(data && data.price) || Number(fallbackPrice) || 0;
     const unit = String((data && data.priceUnit) || '');
     if(!request) return price;
@@ -3655,315 +2365,27 @@ function calculateTotal(request,data,fallbackPrice){
 function generateOffersForRequest(request){ return getEligibleProvidersForRequest(request); }
 function generateOffersForListing(listing){ return; }
 
-async function rejectIncomingProposal(recipientId, requestId){
-    const rec = db.requestRecipients.find(function(x){ return String(x.id) === String(recipientId); });
-    if(!rec){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        return;
-    }
-    // فقط گیرنده پیشنهاد می‌تواند رد کند (مثل Server: provider_id/recipient)
-    const myId = String(currentUser && currentUser.id);
-    const recipientUid = String(rec.recipientId || rec.recipient_id || rec.providerId || '');
-    if(recipientUid && recipientUid !== myId){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        return;
-    }
-    if(rec.status !== 'pending'){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        return;
-    }
-    if(!confirm('رد این درخواست؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            applyServerSnapshot(await window.KeloBackend.rejectRecipient(recipientId));
-            showToast('درخواست رد شد','success');
-            openRequestOffersMap(requestId);
-        }catch(err){
-            showToast((err&&err.body&&err.body.error)||'رد درخواست انجام نشد.','error');
-        }
-        return;
-    }
-    if(rec.status !== 'pending'){
-        showToast('این پیشنهاد دیگر قابل رد نیست','error');
-        openRequestOffersMap(requestId);
-        return;
-    }
-    rec.status='rejected';
-    rec.respondedAt=new Date().toISOString();
-    saveDB();
-    showToast('درخواست رد شد','success');
-    openRequestOffersMap(requestId);
-}
-async function cancelRecipient(recipientId, requestId){
-    const rec = db.requestRecipients.find(function(x){ return String(x.id) === String(recipientId); });
-    if(!rec){
-        showToast('این پیشنهاد قابل لغو نیست','error');
-        return;
-    }
-    // فقط پیشنهاددهنده می‌تواند لغو ارسال کند (مثل Server: proposer_id)
-    const myId = String(currentUser && currentUser.id);
-    const proposerUid = String(rec.proposerId || rec.proposer_id || '');
-    if(proposerUid && proposerUid !== myId){
-        showToast('این پیشنهاد قابل لغو نیست','error');
-        return;
-    }
-    if(rec.status !== 'pending'){
-        showToast('این پیشنهاد قابل لغو نیست','error');
-        return;
-    }
-    if(!confirm('لغو ارسال این پیشنهاد؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            applyServerSnapshot(await window.KeloBackend.cancelRecipient(recipientId));
-            showToast('ارسال لغو شد','success');
-            openRequestOffersMap(requestId);
-        }catch(err){
-            showToast((err&&err.body&&err.body.error)||'لغو ارسال انجام نشد.','error');
-        }
-        return;
-    }
-    if(rec.status !== 'pending'){
-        showToast('این پیشنهاد قابل لغو نیست','error');
-        openRequestOffersMap(requestId);
-        return;
-    }
-    rec.status='closed';
-    rec.closedAt=new Date().toISOString();
-    rec.respondedAt=new Date().toISOString();
-    saveDB();
-    showToast('ارسال لغو شد','success');
-    openRequestOffersMap(requestId);
-}
-async function sendRequestToProvider(providerId, requestId){
-    window.__keloSending = window.__keloSending || {};
-    const _sendKey = String(requestId)+':'+String(providerId);
-    if(window.__keloSending[_sendKey]) return;
-    window.__keloSending[_sendKey] = true;
-    try{ return await sendRequestToProviderInner(providerId, requestId); }
-    finally{
-        delete window.__keloSending[_sendKey];
-        // If the send failed (or bailed out early) the sheet was not re-rendered:
-        // put the button back so the user can try again.
-        const _b = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
-        if(_b && _b.dataset && _b.dataset.origText && _b.disabled){ _b.disabled = false; _b.textContent = _b.dataset.origText; }
-    }
-}
+
+
+
 function sendOfferPeerLabel(request){
     // provide = ماشین‌دار برای کشاورز می‌فرستد؛ need = کشاورز برای ماشین‌دار
     if(request && request.requestKind === 'provide') return 'کشاورز';
     return 'ماشین‌دار';
 }
-function sendOfferSuccessToast(request){
-    return 'پیشنهاد برای ' + sendOfferPeerLabel(request) + ' ارسال شد';
-}
-function sendOfferAlreadyToast(request){
-    return 'این پیشنهاد قبلاً برای این ' + sendOfferPeerLabel(request) + ' ارسال شده است';
-}
-function sendOfferUnavailableToast(request){
-    return request && request.requestKind === 'provide'
-        ? 'این کشاورز در حال حاضر برای این تاریخ در دسترس نیست'
-        : 'این ماشین‌دار در حال حاضر برای این تاریخ در دسترس نیست';
-}
-function sendOfferMapHeader(request){
-    return request && request.requestKind === 'provide' ? 'کشاورزان' : 'ارائه‌دهندگان خدمت';
-}
-async function sendRequestToProviderInner(providerId, requestId){
-    const _btn = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
-    if(_btn){ _btn.dataset.origText = _btn.textContent; _btn.disabled = true; _btn.textContent = 'در حال ارسال…'; }
-    const request=db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
-    if(!request){ showToast('درخواست پیدا نشد','error'); return; }
-    if(request.status==='accepted' || request.status==='in_progress' || request.status==='completed' || request.status==='cancelled' || request.status==='expired'){
-        showToast('این درخواست قبلاً توافق شده است','error'); return;
-    }
 
-    // Mirrors Server: when anchor is a 'provide' ad, date/area/total come from
-    // the other party's own 'need' request when available.
-    let effectiveRequest = request;
-    if(request.requestKind === 'provide'){
-        const farmerReq = db.requests
-            .filter(r => r.userId===providerId && r.requestKind==='need' && r.service===request.service
-                && r.status!=='cancelled' && r.status!=='completed' && r.status!=='expired')
-            .sort((a,b) => new Date(b.createdAt||b.created||0) - new Date(a.createdAt||a.created||0))[0];
-        if(farmerReq) effectiveRequest = farmerReq;
-    }
 
-    // id لنگر UI + id مؤثر (need) — هر دو برای جلوگیری از پیشنهاد تکراری
-    const anchorIds = {};
-    anchorIds[String(request.id)] = true;
-    anchorIds[String(effectiveRequest.id)] = true;
 
-    if(hasActiveProposalForRequest(requestId, request.userId, providerId) ||
-       hasActiveProposalForRequest(effectiveRequest.id, request.userId, providerId)){
-        showToast('در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد','error');
-        return;
-    }
-    const already = db.requestRecipients.some(function(x){
-        if(!['pending','accepted'].includes(x.status)) return false;
-        if(!anchorIds[String(x.requestId)]) return false;
-        const other = String(x.recipientId || x.providerId || '');
-        const prop = String(x.proposerId || '');
-        const target = String(providerId);
-        const me = String(currentUser.id);
-        // همان گیرنده، یا همان جفت proposer/recipient
-        if(other === target) return true;
-        if(prop && other && ((prop === me && other === target) || (prop === target && other === me))) return true;
-        return false;
-    });
-    if(already){
-        showToast(sendOfferAlreadyToast(request),'error'); return;
-    }
 
-    const candidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===providerId)||{providerId:providerId,listingId:null,machineId:null,unitPrice:0,priceUnit:"",location:"",rating:null,data:{}};
-    if(!candidate){ showToast(sendOfferUnavailableToast(request),'error'); return; }
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{
-            applyServerSnapshot(await window.KeloBackend.sendRecipient(requestId,{providerId:providerId,machineId:null,listingId:candidate.listingId||null,unitPrice:candidate.unitPrice,priceUnit:candidate.priceUnit,location:candidate.location}));
-            showToast(sendOfferSuccessToast(request),'success'); openRequestOffersMap(requestId); updateMobileHeader(sendOfferMapHeader(request));
-        }catch(err){showToast((err&&err.body&&err.body.error)||'ارسال درخواست انجام نشد.','error');}
-        return;
-    }
 
-    // مثل Server: request_id مؤثر، proposer=من، recipient=طرف مقابل، provider_id=گیرنده
-    const recipient={
-        id:'rr'+Date.now()+Math.random().toString(36).slice(2,7),
-        requestId:effectiveRequest.id,
-        anchorRequestId:request.id,
-        proposerId:currentUser.id,
-        recipientId:candidate.providerId,
-        providerId:candidate.providerId,
-        provider:candidate.provider,
-        machineId:candidate.machineId,
-        listingId:candidate.listingId || null,
-        service:request.service,
-        unitPrice:candidate.unitPrice,
-        priceUnit:candidate.priceUnit,
-        total:calculateTotal(effectiveRequest,candidate.data,candidate.unitPrice),
-        rating:candidate.rating,
-        location:candidate.location,
-        status:'pending',
-        createdAt:new Date().toISOString()
-    };
-    db.requestRecipients.push(recipient);
-    if(effectiveRequest.status!=='completed') effectiveRequest.status='pending';
-    if(request.id !== effectiveRequest.id && request.status!=='completed') request.status='pending';
-    saveDB();
-    showToast(sendOfferSuccessToast(request),'success');
-    openRequestOffersMap(request.id);
-    updateMobileHeader(sendOfferMapHeader(request));
-}
 function providerHasUnfinishedDeal(providerId){
+    if (window.KeloDomain && window.KeloDomain.deal && window.KeloDomain.deal.providerHasUnfinishedDeal) {
+        return window.KeloDomain.deal.providerHasUnfinishedDeal(db.deals, providerId);
+    }
     return db.deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
 }
-async function acceptOffer(id){
-    const recipient=db.requestRecipients.find(x=>x.id===id && x.providerId===currentUser.id && x.status==='pending');
-    if(!recipient) {
-        if(db.requestRecipients.some(x=>x.id===id && x.status!=='pending')) showToast('این درخواست دیگر قابل پذیرش نیست','error');
-        return;
-    }
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{ const result=await window.KeloBackend.acceptRecipient(id); applyServerSnapshot(result); showToast('کار با شما توافق شد','success'); setMobileOrdersSubTab('deals'); setMobileTab('proposals'); }
-        catch(err){ showToast((err&&err.body&&err.body.error)||'پذیرش درخواست انجام نشد.','error'); await refreshServerSnapshot(true); }
-        return;
-    }
-    const request=db.requests.find(r=>r.id===recipient.requestId);
-    if(!request){ showToast('درخواست پیدا نشد','error'); return; }
-    if(request.status==='accepted' || request.status==='in_progress' || request.status==='completed' || request.status==='cancelled' || request.status==='expired'){
-        recipient.status='closed'; saveDB();
-        showToast('این درخواست قبلاً با ارائه‌دهنده دیگری توافق شده است','error');
-        renderMobileProposals(); return;
-    }
-    if(providerHasUnfinishedDeal(currentUser.id)){
-        const previous=db.deals.find(d=>d.providerId===currentUser.id && d.status!=='completed' && d.status!=='cancelled');
-        const prevReq=previous ? db.requests.find(r=>r.id===previous.requestId) : null;
-        const prevName=prevReq ? serviceName(prevReq.service) : 'خدمت قبلی';
-        const prevDate=prevReq ? requestDate(prevReq) : '—';
-        showToast('برای پذیرش خدمت جدید ابتدا اتمام کار قبلی را ثبت کنید. خدمت قبلی: '+prevName+' | تاریخ: '+prevDate,'error');
-        return;
-    }
 
-    const {start,end}=getRequestDateRange(request);
-    const freshCandidate=getEligibleProvidersForRequest(request).find(x=>x.providerId===currentUser.id && String(x.machineId)===String(recipient.machineId));
-    if(!freshCandidate || (start && hasProviderBookingConflict(currentUser.id, recipient.machineId, start, end))){
-        recipient.status='closed';
-        saveDB();
-        showToast('این ماشین در این زمان دیگر در دسترس نیست','error');
-        renderMobileProposals();
-        return;
-    }
 
-    const stillOpen=db.requestRecipients.find(x=>x.requestId===request.id && x.status==='pending' && x.id===recipient.id);
-    const anotherAccepted=db.requestRecipients.find(x=>x.requestId===request.id && x.status==='accepted');
-    if(!stillOpen || anotherAccepted){
-        showToast('این درخواست قبلاً با ارائه‌دهنده دیگری توافق شده است','error');
-        renderMobileProposals(); return;
-    }
-
-    const booking={
-        id:'b'+Date.now()+Math.random().toString(36).slice(2,7),
-        requestId:request.id,
-        providerId:currentUser.id,
-        requesterId:request.userId,
-        machineId:recipient.machineId,
-        listingId:recipient.listingId || null,
-        start:request.data?.dateStart || request.data?.date,
-        end:request.data?.dateEnd || request.data?.dateStart || request.data?.date,
-        status:'confirmed',
-        createdAt:new Date().toISOString()
-    };
-    db.bookings.push(booking);
-
-    recipient.status='accepted';
-    recipient.respondedAt=new Date().toISOString();
-    db.requestRecipients.filter(x=>x.requestId===request.id && x.id!==recipient.id && x.status==='pending').forEach(x=>{
-        x.status='closed'; x.closedAt=new Date().toISOString();
-    });
-    request.status='accepted';
-
-    const existingDeal=db.deals.find(d=>d.requestId===request.id && d.status!=='cancelled');
-    if(existingDeal){
-        booking.status='cancelled';
-        recipient.status='closed';
-        showToast('این درخواست قبلاً توافق شده است','error');
-        saveDB(); renderMobileProposals(); return;
-    }
-
-    const deal={
-        id:'d'+Date.now()+Math.random().toString(36).slice(2,7),
-        requestId:request.id,
-        bookingId:booking.id,
-        userId:request.userId,
-        providerId:currentUser.id,
-        machineId:recipient.machineId,
-        service:request.service,
-        total:recipient.total,
-        unitPrice:recipient.unitPrice,
-        priceUnit:recipient.priceUnit,
-        counterparty:currentUser.name,
-        paymentStatus:'pending',
-        status:'agreed',
-        createdAt:new Date().toISOString()
-    };
-    db.deals.push(deal);
-    saveDB();
-    showToast('کار با شما توافق شد','success');
-    goBackFromOffersMap();
-    setMobileOrdersSubTab('deals');
-    setMobileTab('proposals');
-}
-async function payDeal(dealId){
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){ showToast('پرداخت آنلاین در مرحله اتصال درگاه پرداخت فعال می‌شود.','info'); return; }
-    const d=db.deals.find(x=>x.id===dealId && x.userId===currentUser.id);
-    // Payment and work completion are independent: completed + unpaid is still payable.
-    if(!d || d.status==='cancelled') return;
-    if(d.paymentStatus==='paid'){ showToast('این توافق قبلاً پرداخت شده است','success'); return; }
-    const amount=Number(d.total)||0;
-    d.paymentStatus='paid';
-    db.payments.push({id:'p'+Date.now(),dealId:d.id,userId:currentUser.id,amount,status:'paid',createdAt:new Date().toISOString()});
-    if(d.status==='agreed') d.status='paid';
-    saveDB();
-    showToast('پرداخت ثبت شد','success');
-    renderMobileProposals();
-}
 function routeToDeal(dealId){
     const d=db.deals.find(x=>x.id===dealId && x.providerId===currentUser.id);
     if(!d) return;
@@ -3971,44 +2393,8 @@ function routeToDeal(dealId){
     if(!req){ showToast('درخواست پیدا نشد','error'); return; }
     openRequestLocationMap(req.id);
 }
-async function cancelDeal(dealId){
-    const d=db.deals.find(x=>x.id===dealId && isDealForUser(x) && x.status!=='completed' && x.status!=='cancelled' && x.paymentStatus!=='paid');
-    if(!d) return;
-    if(!confirm('این کار لغو شود؟')) return;
-    if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{applyServerSnapshot(await window.KeloBackend.cancelDeal(dealId));showToast('کار لغو شد','success');renderMobileProposals();}catch(err){showToast((err&&err.body&&err.body.error)||'لغو کار انجام نشد.','error');}return;
-    }
-    d.status='cancelled';
-    d.cancelledAt=new Date().toISOString();
-    const booking=db.bookings.find(b=>b.id===d.bookingId);
-    if(booking) booking.status='cancelled';
-    const recs=db.requestRecipients.filter(x=>x.requestId===d.requestId);
-    recs.forEach(function(x){
-        if(x.status==='accepted'){ x.status='closed'; x.closedAt=new Date().toISOString(); }
-        else if(x.status==='closed' && !x.respondedAt){ x.status='pending'; x.closedAt=null; }
-    });
-    saveDB();
-    showToast('کار لغو شد','success');
-    renderMobileProposals();
-}
-async function completeDeal(dealId){
-    const d=db.deals.find(x=>x.id===dealId && x.providerId===currentUser.id && x.status!=='completed' && x.status!=='cancelled');
-    if(!d) return;
-        if(window.KeloBackend && window.KeloBackend.isServerMode()){
-        try{applyServerSnapshot(await window.KeloBackend.completeDeal(dealId));showToast('اتمام کار ثبت شد','success');renderMobileProposals();}catch(err){showToast((err&&err.body&&err.body.error)||'ثبت اتمام کار انجام نشد.','error');}return;
-    }
-    d.status='completed';
-    d.completedAt=new Date().toISOString();
-    const req=db.requests.find(r=>r.id===d.requestId);
-    if(req) req.status='completed';
-    const booking=db.bookings.find(b=>b.id===d.bookingId);
-    if(booking) booking.status='completed';
-    const rec=db.requestRecipients.find(x=>x.requestId===d.requestId && x.status==='accepted');
-    if(rec) rec.status='completed';
-    saveDB();
-    showToast('اتمام کار ثبت شد','success');
-    renderMobileProposals();
-}
+
+
 function calculateTotalForDeal(deal){ return Number(deal?.total)||0; }
 
 function roleLabel(r){ return ({farmer:'کشاورز',provider:'ارائه‌دهنده',admin:'مدیر'})[r]||r; }
@@ -4053,6 +2439,42 @@ document.addEventListener('keydown', function(e){
     var acc = document.getElementById('mobileAccountBackdrop');
     if(acc && acc.classList.contains('open')){ closeMobileAccountSheet(); return; }
 });
+
+
+// Phase 4 — helpers مورد نیاز LocalAdapter برای Proposal
+(function bindProposalHelpers(){
+    if (!window.KeloLocalAdapter || typeof window.KeloLocalAdapter.bindDataAccess !== 'function') return;
+    var prev = window.KeloLocalAdapter;
+    // re-bind full data access including helpers (getDB still closes over db)
+    window.KeloLocalAdapter.bindDataAccess({
+        getDB: function () { return db; },
+        saveDB: function () { return saveDB(); },
+        normalizePhone: function (v) { return normalizePhone(v); },
+        normalizeNationalId: function (v) { return normalizeNationalId(v); },
+        isAdmin: function (u) { return isAdmin(u); },
+        helpers: {
+            hasActiveProposalForRequest: function (a, b, c) { return hasActiveProposalForRequest(a, b, c); },
+            getEligibleProvidersForRequest: function (r) { return getEligibleProvidersForRequest(r); },
+            calculateTotal: function (r, d, p) { return calculateTotal(r, d, p); },
+            providerHasUnfinishedDeal: function (id) { return providerHasUnfinishedDeal(id); },
+            hasProviderBookingConflict: function (a, b, c, d) { return hasProviderBookingConflict(a, b, c, d); },
+            getRequestDateRange: function (r) { return getRequestDateRange(r); },
+            serviceName: function (s) { return serviceName(s); },
+            requestDate: function (r) { return requestDate(r); },
+            sendOfferAlreadyToast: function (r) { return sendOfferAlreadyToast(r); },
+            sendOfferSuccessToast: function (r) { return sendOfferSuccessToast(r); },
+            sendOfferUnavailableToast: function (r) { return sendOfferUnavailableToast(r); },
+            parseStoredDate: function (v) { return parseStoredDate(v); },
+            nearestCityFromCoords: function (lat, lng) { return typeof nearestCityFromCoords === 'function' ? nearestCityFromCoords(lat, lng) : null; },
+            provinceFromCity: function (c) { return typeof provinceFromCity === 'function' ? provinceFromCity(c) : null; },
+            formatActivityArea: function (a) { return typeof formatActivityArea === 'function' ? formatActivityArea(a) : ''; },
+            getEligibleProvidersForRequest: function (r) { return getEligibleProvidersForRequest(r); }
+        }
+    });
+    if (window.KeloQueryService && typeof window.KeloQueryService.bindDataAccess === 'function') {
+        window.KeloQueryService.bindDataAccess({ getDB: function () { return db; } });
+    }
+})();
 
 document.addEventListener('DOMContentLoaded', async function(){
     document.querySelectorAll('img').forEach(img=>{ const localSrc=img.getAttribute('src')||''; const parts=localSrc.split('/'); const filename=parts[parts.length-1].split('?')[0]; const externalUrl=driveImageMap[filename]; if(externalUrl){ img.dataset.fallbackExternal=externalUrl; img.src=localSrc; img.onerror=function(){ if(this.dataset.fallbackExternal && !this.dataset.triedExternal){ this.dataset.triedExternal='true'; this.src=this.dataset.fallbackExternal; }else this.style.background='#dfe7cc'; }; } });

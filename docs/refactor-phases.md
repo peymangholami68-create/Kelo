@@ -1,32 +1,23 @@
-# KELO Refactor Phases
+# Cleanup C — Query layer (current)
 
-**Baseline:** Kelo36-CG2
+**Version:** `Kelo57-CleanupC`
 
-## Phase 0 — Core → `Kelo40-P0-Core`
-## Phase 1 — Auth → `Kelo41-P1-Auth`
-
-## Phase 2 — Profile (current)
-
-**Version:** `Kelo42-P2-Profile`
-
-### Added / changed
+## Rule
 
 ```text
-js/services/profile.service.js   → KeloService.profile.save()
-js/adapters/local.adapter.js     → saveProfile (local DB + uniqueness)
-js/adapters/api.adapter.js       → saveProfile via KeloBackend.updateProfile
-js/app.js                        → saveFirstProfile / saveProfile / saveProfileEdit thin UI
+UI  →  KeloService.query.*  →  DB mirror
+UI  →  Domain services      →  mutations
 ```
 
-### Flow
+## Added
 
 ```text
-UI form
-  → KeloService.profile.save({ name, profile, ... })
-      → LocalAdapter.saveProfile  OR  ApiAdapter.saveProfile
-  → upsertAuthenticatedUserMirror + render
+js/services/query.service.js
+  bindDataAccess / snapshot
+  getMyRequest / getMyDeal
+  requests / deals / recipients / machines / listings
 ```
 
-### Next
+UI modules (map, sheet, proposal, payment, request) no longer reference `db.*` directly.
 
-Phase 3 — Request (`Kelo43-P3-Request`)
+`app.js` may still read `db` for remaining render helpers — acceptable residual.
