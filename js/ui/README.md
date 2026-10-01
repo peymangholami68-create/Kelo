@@ -1,14 +1,18 @@
 # KELO UI modules
 
-| File | Role |
-|------|------|
-| auth.ui.js | login / logout |
-| profile.ui.js | profile forms |
-| request.ui.js | request mutations |
-| proposal.ui.js | proposal mutations |
-| deal.ui.js | deal / reviews |
-| payment.ui.js | payments |
-| map.ui.js | maps, geo, offers map (Phase 10b) |
-| sheet.ui.js | sheets, tabs, toasts (Phase 10b) |
+Each module:
+1. Assigns handlers to `window` (onclick compatibility)
+2. Exposes `KeloXxxUI.init()` for Phase 18 bootstrap
 
-Load after `app.js` (shared state/globals).
+| Module | Facade |
+|--------|--------|
+| auth.ui.js | KeloAuthUI |
+| profile.ui.js | KeloProfileUI |
+| request.ui.js | KeloRequestUI |
+| proposal.ui.js | KeloProposalUI |
+| deal.ui.js | KeloDealUI |
+| payment.ui.js | KeloPaymentUI |
+| map.ui.js | KeloMapUI |
+| sheet.ui.js | KeloSheetUI |
+
+Load order: `app.js` → `ui/*.js` → `app/kelo-app.js`

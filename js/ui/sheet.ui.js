@@ -1,5 +1,5 @@
 /**
- * KELO — Sheets / tabs / toasts UI (Phase 10b)
+ * KELO — Sheet UI (Phase 17)
  */
 (function (global) {
   'use strict';
@@ -318,5 +318,65 @@
   }
 
   global.sendOfferUnavailableToast = sendOfferUnavailableToast;
+
+  function keloEmptyStateHtml(title, desc, actionHtml){
+      const icon = '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>';
+      return '<div class="kelo-empty-state-box"><div class="kelo-empty-icon">'+icon+'</div><h3 class="kelo-empty-title">'+escapeHtml(title)+'</h3><p class="kelo-empty-desc">'+escapeHtml(desc)+'</p>'+(actionHtml?'<div class="kelo-empty-action">'+actionHtml+'</div>':'')+'</div>';
+  }
+
+  global.keloEmptyStateHtml = keloEmptyStateHtml;
+
+  function keloCardIcon(type){
+      const common='viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+      const icons={
+          machine:'<svg '+common+'><rect x="2" y="9" width="14" height="8" rx="1.5"/><circle cx="6" cy="19" r="2"/><circle cx="14" cy="19" r="2"/><path d="M16 11h3l3 3v3h-2"/></svg>',
+          area:'<svg '+common+'><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>',
+          location:'<svg '+common+'><path d="M12 22s-8-7.5-8-13a8 8 0 1 1 16 0c0 5.5-8 13-8 13z"/><circle cx="12" cy="9" r="3"/></svg>',
+          date:'<svg '+common+'><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+          price:'<svg '+common+'><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 10h6M9 14h6"/></svg>',
+          phone:'<svg '+common+'><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 18h4"/></svg>',
+          role:'<svg '+common+'><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>'
+      };
+      return icons[type]||icons.location;
+  }
+
+  global.keloCardIcon = keloCardIcon;
+
+  function keloCardInfo(type,label,value){
+      if(!value || value==='—') return '';
+      return '<div class="kelo-card-info">'
+          +'<span class="kelo-card-info-icon">'+keloCardIcon(type)+'</span>'
+          +'<span class="kelo-card-info-text"><small>'+escapeHtml(label)+'</small>'
+          +'<strong>'+escapeHtml(value)+'</strong></span>'
+          +'</div>';
+  }
+
+  global.keloCardInfo = keloCardInfo;
+
+  function keloRatingBadge(avg, count){
+      return '<span class="kelo-rating-badge">'
+          + '<svg class="kelo-rating-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>'
+          + '<span class="kelo-rating-num">' + toPersianDigits(Number(avg).toFixed(1)) + '</span>'
+          + '</span>';
+  }
+
+  global.keloRatingBadge = keloRatingBadge;
+
+
+  /**
+   * Phase 18 — module facade (idempotent).
+   * Handlers remain on window for HTML onclick compatibility.
+   */
+  var _inited = false;
+  global.KeloSheetUI = {
+    name: 'Sheet',
+    init: function () {
+      if (_inited) return global.KeloSheetUI;
+      _inited = true;
+      return global.KeloSheetUI;
+    },
+    isReady: function () { return _inited; }
+  };
+  // auto-register handlers already assigned to global above
 
 })(typeof window !== 'undefined' ? window : globalThis);

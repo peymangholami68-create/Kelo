@@ -88,4 +88,21 @@
 
   global.closePaymentOptions = closePaymentOptions;
 
+
+  /**
+   * Phase 18 — module facade (idempotent).
+   * Handlers remain on window for HTML onclick compatibility.
+   */
+  var _inited = false;
+  global.KeloPaymentUI = {
+    name: 'Payment',
+    init: function () {
+      if (_inited) return global.KeloPaymentUI;
+      _inited = true;
+      return global.KeloPaymentUI;
+    },
+    isReady: function () { return _inited; }
+  };
+  // auto-register handlers already assigned to global above
+
 })(typeof window !== 'undefined' ? window : globalThis);

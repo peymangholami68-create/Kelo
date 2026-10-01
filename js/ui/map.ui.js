@@ -1,5 +1,5 @@
 /**
- * KELO — Map / geo / offers map UI (Phase 10b)
+ * KELO — Map UI (Phase 17)
  */
 (function (global) {
   'use strict';
@@ -272,7 +272,7 @@
 
   async function openRequestOffersMap(requestId){
       if(!currentUser) return;
-      const req = qdb().requests.find(r => r.id === requestId && r.userId === currentUser.id);
+      const req = qdb().requests.find(r => String(r.id) === String(requestId) && String(r.userId) === String(currentUser.id));
       if(!req){ showToast('\u062f\u0631\u062e\u0648\u0627\u0633\u062a \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f', 'error'); return; }
       const _isProvideReq = (req.requestKind === 'provide');
       const _existingSheet = document.getElementById('keloRequestOffersSheet');
@@ -743,5 +743,58 @@
   }
 
   global.sendOfferMapHeader = sendOfferMapHeader;
+
+  function locationLabelFromCoords(lat, lng){
+      const city = nearestCityFromCoords(lat, lng);
+      if(city){
+          const province = provinceFromCity(city);
+          return province ? (city + '، ' + province) : city;
+      }
+      return 'موقعیت روی نقشه';
+  }
+
+  global.locationLabelFromCoords = locationLabelFromCoords;
+
+  function getKeloCurrentPosition(onSuccess, onError){
+      if(!navigator.geolocation){
+          if(onError) onError({code:0, message:'Geolocation is not supported'});
+          return;
+      }
+      const fail = typeof onError === 'function' ? onError : function(){};
+      const success = typeof onSuccess === 'function' ? onSuccess : function(){};
+      let retried = false;
+      const run = opts => navigator.geolocation.getCurrentPosition(success, function(err){
+          if(!retried && (err && (err.code===2 || err.code===3))){
+              retried = true;
+              navigator.geolocation.getCurrentPosition(success, fail, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+              return;
+          }
+          fail(err);
+      }, opts);
+      run({enableHighAccuracy:false, timeout:12000, maximumAge:0});
+  }
+
+  global.getKeloCurrentPosition = getKeloCurrentPosition;
+
+  function geoDistanceKm(a,b){ if(!a||!b)return Infinity; const toRad=x=>x*Math.PI/180, R=6371; const dLat=toRad(b[0]-a[0]), dLng=toRad(b[1]-a[1]); const s=Math.sin(dLat/2)**2+Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(s)); }
+
+  global.geoDistanceKm = geoDistanceKm;
+
+
+  /**
+   * Phase 18 — module facade (idempotent).
+   * Handlers remain on window for HTML onclick compatibility.
+   */
+  var _inited = false;
+  global.KeloMapUI = {
+    name: 'Map',
+    init: function () {
+      if (_inited) return global.KeloMapUI;
+      _inited = true;
+      return global.KeloMapUI;
+    },
+    isReady: function () { return _inited; }
+  };
+  // auto-register handlers already assigned to global above
 
 })(typeof window !== 'undefined' ? window : globalThis);
