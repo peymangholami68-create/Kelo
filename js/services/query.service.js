@@ -1,8 +1,8 @@
 /**
- * KELO — Query / Read layer (Cleanup C)
+ * KELO — Query / Read layer (Phase 19C)
  *
- * UI should read marketplace data through here, not via global `db.*`.
- * Writes still go through domain services.
+ * UI should read marketplace data through here (or qdb()), not raw global db
+ * for business lists. Writes still go through domain services / adapters.
  */
 (function (global) {
   'use strict';
@@ -22,7 +22,6 @@
     if (dataAccess && typeof dataAccess.getDB === 'function') {
       return dataAccess.getDB();
     }
-    // last-resort compatibility (should be bound from app.js)
     if (global.db) return global.db;
     return null;
   }
@@ -32,6 +31,41 @@
       return global.KeloService.adapter();
     }
     return global.KeloLocalAdapter || null;
+  }
+
+  function emptyMirror() {
+    return {
+      requests: [],
+      listings: [],
+      machines: [],
+      users: [],
+      bookings: [],
+      requestRecipients: [],
+      deals: [],
+      reviews: [],
+      payments: []
+    };
+  }
+
+  /** Same array refs as live DB when bound — safe for rare local mirror writes. */
+  function mirror() {
+    var db = getDB();
+    if (!db) return emptyMirror();
+    return {
+      requests: db.requests || [],
+      listings: db.listings || [],
+      machines: db.machines || [],
+      users: db.users || [],
+      bookings: db.bookings || [],
+      requestRecipients: db.requestRecipients || [],
+      deals: db.deals || [],
+      reviews: db.reviews || [],
+      payments: db.payments || []
+    };
+  }
+
+  function qdb() {
+    return mirror();
   }
 
   async function snapshot() {
@@ -46,17 +80,8 @@
         : { ok: false, message: 'داده در دسترس نیست' };
     }
     return Result
-      ? Result.ok({
-          requests: db.requests || [],
-          listings: db.listings || [],
-          machines: db.machines || [],
-          users: db.users || [],
-          bookings: db.bookings || [],
-          requestRecipients: db.requestRecipients || [],
-          deals: db.deals || [],
-          reviews: db.reviews || []
-        })
-      : { ok: true, data: db };
+      ? Result.ok(mirror())
+      : { ok: true, data: mirror() };
   }
 
   function currentUserId() {
@@ -64,36 +89,19 @@
     return u && u.id != null ? u.id : null;
   }
 
-  /** Synchronous helpers for UI that still runs sync render paths */
-  function requests() {
-    var db = getDB();
-    return (db && db.requests) || [];
-  }
-
-  function deals() {
-    var db = getDB();
-    return (db && db.deals) || [];
-  }
-
-  function recipients() {
-    var db = getDB();
-    return (db && db.requestRecipients) || [];
-  }
-
-  function machines() {
-    var db = getDB();
-    return (db && db.machines) || [];
-  }
-
-  function listings() {
-    var db = getDB();
-    return (db && db.listings) || [];
-  }
+  function requests() { return mirror().requests; }
+  function deals() { return mirror().deals; }
+  function recipients() { return mirror().requestRecipients; }
+  function machines() { return mirror().machines; }
+  function listings() { return mirror().listings; }
+  function users() { return mirror().users; }
+  function reviews() { return mirror().reviews; }
+  function bookings() { return mirror().bookings; }
+  function payments() { return mirror().payments; }
 
   function getRequest(id, opts) {
     opts = opts || {};
-    var list = requests();
-    return list.find(function (r) {
+    return requests().find(function (r) {
       if (String(r.id) !== String(id)) return false;
       if (opts.userId != null && String(r.userId) !== String(opts.userId)) return false;
       return true;
@@ -102,10 +110,13 @@
 
   function getDeal(id, opts) {
     opts = opts || {};
-    var list = deals();
-    return list.find(function (d) {
+    return deals().find(function (d) {
       if (String(d.id) !== String(id)) return false;
-      if (opts.userId != null && String(d.userId) !== String(opts.userId)) return false;
+      if (opts.userId != null) {
+        var uid = String(opts.userId);
+        var mine = String(d.userId) === uid || String(d.providerId) === uid;
+        if (!mine) return false;
+      }
       return true;
     }) || null;
   }
@@ -118,20 +129,45 @@
     return getDeal(dealId, { userId: currentUserId() });
   }
 
+  function findUser(id) {
+    if (id == null) return null;
+    return users().find(function (u) {
+      return String(u.id) === String(id);
+    }) || null;
+  }
+
+  function findRequest(id) {
+    return getRequest(id);
+  }
+
+  function findDeal(id) {
+    return getDeal(id);
+  }
+
   var queryService = {
     bindDataAccess: bindDataAccess,
     snapshot: snapshot,
+    mirror: mirror,
+    qdb: qdb,
     requests: requests,
     deals: deals,
     recipients: recipients,
     machines: machines,
     listings: listings,
+    users: users,
+    reviews: reviews,
+    bookings: bookings,
+    payments: payments,
     getRequest: getRequest,
     getDeal: getDeal,
     getMyRequest: getMyRequest,
-    getMyDeal: getMyDeal
+    getMyDeal: getMyDeal,
+    findUser: findUser,
+    findRequest: findRequest,
+    findDeal: findDeal
   };
 
   global.KeloQueryService = queryService;
+  global.qdb = qdb;
   if (global.KeloService) global.KeloService.query = queryService;
 })(typeof window !== 'undefined' ? window : globalThis);

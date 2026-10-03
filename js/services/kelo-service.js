@@ -18,15 +18,31 @@
   }
 
   function getMode() {
+    if (global.KeloSync && typeof global.KeloSync.getMode === 'function') {
+      return global.KeloSync.getMode();
+    }
     var backend = global.KeloBackend;
     if (backend && typeof backend.getMode === 'function') return backend.getMode();
     if (backend && typeof backend.isServerMode === 'function' && backend.isServerMode()) return 'server';
     return 'local';
   }
 
+  /**
+   * App bootstrap transport probe. Prefer KeloSync; never call from UI for business logic.
+   */
+  async function bootstrap() {
+    if (global.KeloSync && typeof global.KeloSync.initRuntime === 'function') {
+      return global.KeloSync.initRuntime();
+    }
+    var backend = global.KeloBackend;
+    if (backend && typeof backend.init === 'function') return backend.init();
+    return 'local';
+  }
+
   var KeloService = {
     adapter: getActiveAdapter,
     mode: getMode,
+    bootstrap: bootstrap,
     auth: global.KeloAuthService || null,
     profile: global.KeloProfileService || null,
     requests: global.KeloRequestService || null,

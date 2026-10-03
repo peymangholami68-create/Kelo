@@ -13,6 +13,16 @@ function asNumber(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Accept only real UUIDs; local/demo ids must become null for Postgres. */
+function asUuid(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)) {
+    return null;
+  }
+  return s;
+}
+
 function servicePayload(row) {
   return {
     id: row.id,
@@ -353,56 +363,199 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
   res.json({ok:true,providers:out});
 }catch(e){next(e)}});
 
-router.post('/requests/:id/recipients',auth,async(req,res,next)=>{const client=await pool.connect();try{const b=req.body||{};const r=await client.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1 for update`,[req.params.id]);if(!r.rows[0])return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});let request=r.rows[0];const proposerId=req.session.userId;const recipientId=String(b.recipientId||b.providerId||'');if(!recipientId)return res.status(400).json({ok:false,error:'گیرنده پیشنهاد مشخص نشده است.'});if(recipientId===proposerId)return res.status(400).json({ok:false,error:'ارسال پیشنهاد به خودتان مجاز نیست.'});
-    const isOwner=String(request.requester_id)===String(proposerId);
-    const listing=b.listingId ? (await client.query(`select l.*,s.slug service_slug from service_listings l join service_types s on s.id=l.service_type_id where l.id=$1 and l.provider_id=$2 and l.status='active'`,[b.listingId,proposerId])).rows[0] : null;
-    if(b.listingId && !listing)return res.status(400).json({ok:false,error:'خدمت انتخاب‌شده معتبر نیست.'});
-    if(!isOwner && !listing && request.request_kind==='need'){
-      const ownProvide=await client.query(`select id from requests where requester_id=$1 and request_kind='provide' and status not in ('cancelled','completed','expired') and service_type_id=$2 limit 1`,[proposerId,request.service_type_id]);
-      if(!ownProvide.rowCount)return res.status(403).json({ok:false,error:'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.'});
+router.post('/requests/:id/recipients', auth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const b = req.body || {};
+    const requestId = asUuid(req.params.id);
+    if (!requestId) {
+      await client.query('rollback');
+      return res.status(400).json({ ok: false, error: 'شناسه درخواست نامعتبر است.' });
     }
-    // Bug fix: when the anchor request is a 'provide' ad, its owner plays the
-    // provider role in the resulting deal (see accept_request_recipient),
-    // and the real farmer/customer is the OTHER side of this proposal. Date,
-    // area and status must come from THAT person's own 'need' request, not
-    // from the ad's general availability window — otherwise the total comes
-    // out 0 for هکتار/تن pricing (the ad has no area), the booking gets the
-    // owner's own date range instead of the farmer's, and the two sides'
-    // request cards end up with swapped active/inactive states.
-    if(request.request_kind === 'provide'){
-      const farmerUserId = isOwner ? recipientId : proposerId;
-      const farmerReq = await client.query(
-        `select r.*, s.slug service_slug from requests r join service_types s on s.id=r.service_type_id
-         where r.requester_id=$1 and r.request_kind='need' and r.service_type_id=$2
-           and r.status not in ('cancelled','completed','expired') order by r.created_at desc limit 1 for update`,
-        [farmerUserId, request.service_type_id]
+    const r = await client.query(
+      `select r.*, s.slug service_slug from requests r
+       join service_types s on s.id = r.service_type_id
+       where r.id = $1 for update`,
+      [requestId]
+    );
+    if (!r.rows[0]) {
+      await client.query('rollback');
+      return res.status(404).json({ ok: false, error: 'درخواست پیدا نشد.' });
+    }
+    let request = r.rows[0];
+    const proposerId = req.session.userId;
+    const recipientId = asUuid(b.recipientId || b.providerId);
+    if (!recipientId) {
+      await client.query('rollback');
+      return res.status(400).json({ ok: false, error: 'گیرنده پیشنهاد مشخص نشده است.' });
+    }
+    if (String(recipientId) === String(proposerId)) {
+      await client.query('rollback');
+      return res.status(400).json({ ok: false, error: 'ارسال پیشنهاد به خودتان مجاز نیست.' });
+    }
+
+    const isOwner = String(request.requester_id) === String(proposerId);
+    const listingId = asUuid(b.listingId);
+    const machineIdIn = asUuid(b.machineId);
+
+    let listing = null;
+    if (listingId) {
+      // Listing belongs to the machine owner (provider side), not necessarily the proposer.
+      const listingOwnerId = isOwner ? recipientId : proposerId;
+      const lr = await client.query(
+        `select l.*, s.slug service_slug from service_listings l
+         join service_types s on s.id = l.service_type_id
+         where l.id = $1 and l.provider_id = $2 and l.status = 'active'`,
+        [listingId, listingOwnerId]
       );
-      // If the farmer has no formal 'need' request (they proposed straight
-      // to the ad without going through their own request first), there is
-      // no farmer-specific date/area anywhere yet to re-anchor to — fall
-      // back to the ad's own data, same as before this fix.
-      if(farmerReq.rows[0]) request = farmerReq.rows[0];
-    }
-    const existing=await client.query(`select id from request_recipients where request_id=$1 and proposer_id=$2 and recipient_id=$3 and status in ('pending','accepted')`,[request.id,proposerId,recipientId]);if(existing.rowCount)return res.status(409).json({ok:false,error:'این پیشنهاد قبلاً ارسال شده است.'});
-    const __reciprocal=await client.query("select id from request_recipients where request_id=$1 and status in ('pending','accepted') and ((proposer_id=$2 and recipient_id=$3) or (proposer_id=$3 and recipient_id=$2)) limit 1",[request.id,proposerId,recipientId]);if(__reciprocal.rowCount)return res.status(409).json({ok:false,error:'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.'});
-    let unitPrice=listing?Number(listing.price):asNumber(b.unitPrice);
-    let priceUnit=listing?listing.price_unit:(b.priceUnit||'');
-    if(!listing){
-      let _provideRow = null;
-      const _tryProvide = async function(uid){
-        const r = await client.query(`select data from requests where requester_id=$1 and request_kind='provide' and status != 'cancelled' and service_type_id=$2 order by created_at desc limit 1`,[uid, request.service_type_id]);
-        return r.rows[0] || null;
-      };
-      _provideRow = await _tryProvide(proposerId);
-      if(!_provideRow) _provideRow = await _tryProvide(recipientId);
-      if(_provideRow){
-        unitPrice = asNumber(_provideRow.data?.price) || unitPrice;
-        priceUnit = String(_provideRow.data?.priceUnit || priceUnit || '');
+      listing = lr.rows[0] || null;
+      if (!listing) {
+        // Soft-fail: continue without listing rather than 500
+        console.warn('kelo send: listing not found or not active', listingId, listingOwnerId);
       }
     }
-    const reqData=request.data||{};let total=unitPrice;if(String(priceUnit).includes('هکتار')){const _a=Number(request.area_ha)||Number(reqData.area)||0;total=unitPrice*_a;}else if(String(priceUnit).includes('تن')){const _m=Number(reqData.amount)||Number(reqData.area)||0;total=unitPrice*_m;}else if(String(priceUnit).includes('روز')){const _s=reqData.dateStart||reqData.date||request.date_start;const _e=reqData.dateEnd||reqData.dateStart||reqData.date||request.date_end;if(_s&&_e){const _sd=new Date(_s);const _ed=new Date(_e);if(!isNaN(_sd)&&!isNaN(_ed)){const _ms=24*60*60*1000;const _d=Math.floor((_ed.getTime()-_sd.getTime())/_ms)+1;total=unitPrice*Math.max(_d,1);}}}else if(String(priceUnit).includes('سرویس')){total=unitPrice;}
-    await client.query(`insert into request_recipients(request_id,proposer_id,recipient_id,provider_id,machine_id,listing_id,unit_price,price_unit,total,rating,location_label,status) values($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,'pending')`,[request.id,proposerId,recipientId,b.machineId||listing?.machine_id||null,b.listingId||null,unitPrice,priceUnit,total,listing?.rating||null,listing?.location_label||b.location||request.service_location_label||null]);
-    await client.query(`update requests set status='pending' where id=$1`,[request.id]);res.status(201).json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}finally{client.release()}});
+
+    if (!isOwner && !listing && request.request_kind === 'need') {
+      const ownProvide = await client.query(
+        `select id from requests where requester_id = $1 and request_kind = 'provide'
+         and status not in ('cancelled','completed','expired') and service_type_id = $2 limit 1`,
+        [proposerId, request.service_type_id]
+      );
+      if (!ownProvide.rowCount) {
+        await client.query('rollback');
+        return res.status(403).json({ ok: false, error: 'برای ارسال پیشنهاد، خدمت ارائه‌شده معتبر پیدا نشد.' });
+      }
+    }
+
+    if (request.request_kind === 'provide') {
+      const farmerUserId = isOwner ? recipientId : proposerId;
+      const farmerReq = await client.query(
+        `select r.*, s.slug service_slug from requests r
+         join service_types s on s.id = r.service_type_id
+         where r.requester_id = $1 and r.request_kind = 'need' and r.service_type_id = $2
+           and r.status not in ('cancelled','completed','expired')
+         order by r.created_at desc limit 1 for update`,
+        [farmerUserId, request.service_type_id]
+      );
+      if (farmerReq.rows[0]) request = farmerReq.rows[0];
+    }
+
+    const existing = await client.query(
+      `select id from request_recipients
+       where request_id = $1 and proposer_id = $2 and recipient_id = $3
+         and status in ('pending','accepted')`,
+      [request.id, proposerId, recipientId]
+    );
+    if (existing.rowCount) {
+      await client.query('rollback');
+      return res.status(409).json({ ok: false, error: 'این پیشنهاد قبلاً ارسال شده است.' });
+    }
+    const reciprocal = await client.query(
+      `select id from request_recipients
+       where request_id = $1 and status in ('pending','accepted')
+         and ((proposer_id = $2 and recipient_id = $3) or (proposer_id = $3 and recipient_id = $2))
+       limit 1`,
+      [request.id, proposerId, recipientId]
+    );
+    if (reciprocal.rowCount) {
+      await client.query('rollback');
+      return res.status(409).json({ ok: false, error: 'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد.' });
+    }
+
+    let unitPrice = listing ? Number(listing.price) : asNumber(b.unitPrice);
+    let priceUnit = listing ? listing.price_unit : (b.priceUnit || '');
+    if (!listing) {
+      const tryProvide = async function (uid) {
+        const pr = await client.query(
+          `select data from requests where requester_id = $1 and request_kind = 'provide'
+           and status != 'cancelled' and service_type_id = $2
+           order by created_at desc limit 1`,
+          [uid, request.service_type_id]
+        );
+        return pr.rows[0] || null;
+      };
+      let provideRow = await tryProvide(proposerId);
+      if (!provideRow) provideRow = await tryProvide(recipientId);
+      if (provideRow) {
+        unitPrice = asNumber(provideRow.data && provideRow.data.price) || unitPrice;
+        priceUnit = String((provideRow.data && provideRow.data.priceUnit) || priceUnit || '');
+      }
+    }
+
+    const reqData = request.data || {};
+    let total = unitPrice;
+    if (String(priceUnit).includes('هکتار')) {
+      const a = Number(request.area_ha) || Number(reqData.area) || 0;
+      total = unitPrice * a;
+    } else if (String(priceUnit).includes('تن')) {
+      const m = Number(reqData.amount) || Number(reqData.area) || 0;
+      total = unitPrice * m;
+    } else if (String(priceUnit).includes('روز')) {
+      const s = reqData.dateStart || reqData.date || request.date_start;
+      const e = reqData.dateEnd || reqData.dateStart || reqData.date || request.date_end;
+      if (s && e) {
+        const sd = new Date(s);
+        const ed = new Date(e);
+        if (!isNaN(sd) && !isNaN(ed)) {
+          const ms = 24 * 60 * 60 * 1000;
+          const d = Math.floor((ed.getTime() - sd.getTime()) / ms) + 1;
+          total = unitPrice * Math.max(d, 1);
+        }
+      }
+    } else if (String(priceUnit).includes('سرویس')) {
+      total = unitPrice;
+    }
+
+    const _mach = machineIdIn || asUuid(listing && listing.machine_id) || null;
+    const _listId = listingId || null;
+    const _loc = (listing && listing.location_label) || b.location || request.service_location_label || null;
+    const _rating = listing && listing.rating != null ? Number(listing.rating) : null;
+
+    const reactivated = await client.query(
+      `update request_recipients set
+         status = 'pending', closed_at = null, responded_at = null,
+         provider_id = $3, machine_id = $4, listing_id = $5,
+         unit_price = $6, price_unit = $7, total = $8, rating = $9, location_label = $10
+       where request_id = $1 and proposer_id = $2 and recipient_id = $3
+         and status in ('closed','rejected')
+       returning id`,
+      [request.id, proposerId, recipientId, _mach, _listId, unitPrice, priceUnit, total, _rating, _loc]
+    );
+
+    if (!reactivated.rowCount) {
+      await client.query(
+        `insert into request_recipients(
+           request_id, proposer_id, recipient_id, provider_id, machine_id, listing_id,
+           unit_price, price_unit, total, rating, location_label, status
+         ) values ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,'pending')`,
+        [request.id, proposerId, recipientId, _mach, _listId, unitPrice, priceUnit, total, _rating, _loc]
+      );
+    }
+
+    await client.query(`update requests set status = 'pending' where id = $1`, [request.id]);
+    await client.query('commit');
+    res.status(201).json({ ok: true, data: await getSnapshot(req.session.userId) });
+  } catch (e) {
+    try { await client.query('rollback'); } catch (_) {}
+    console.error('POST /requests/:id/recipients', e);
+    // Surface useful message instead of opaque 500 when possible
+    const msg = e && e.message ? String(e.message) : '';
+    if (/uuid|invalid input syntax/i.test(msg)) {
+      return res.status(400).json({ ok: false, error: 'شناسه نامعتبر در ارسال پیشنهاد.' });
+    }
+    if (/unique|duplicate/i.test(msg)) {
+      return res.status(409).json({ ok: false, error: 'این پیشنهاد قبلاً ارسال شده است.' });
+    }
+    if (/foreign key|violates/i.test(msg)) {
+      return res.status(400).json({ ok: false, error: 'ارجاع خدمت یا ماشین معتبر نیست.' });
+    }
+    next(e);
+  } finally {
+    client.release();
+  }
+});
+
 
 
 router.delete('/request-recipients/:id', auth, async(req,res,next)=>{

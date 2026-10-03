@@ -82,3 +82,6 @@ LocalAdapter  ApiAdapter
 Phase 0 only introduces the skeleton (`core/`, `adapters/` stubs, `services/kelo-service.js`).
 Baseline for this refactor: **Kelo36-CG2**.
 Domain migration starts at Phase 1 (Auth).
+
+## Freeze
+As of Kelo68, structural architecture is frozen. See `architecture-freeze.md`.

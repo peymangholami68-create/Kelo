@@ -337,7 +337,27 @@
         return Promise.resolve(Result.fail(Errors.CODES.VALIDATION, (plan && plan.message) || 'plan نامعتبر است'));
       }
       db.requestRecipients = db.requestRecipients || [];
-      db.requestRecipients.push(plan.recipient);
+      var rec = plan.recipient;
+      var existing = db.requestRecipients.find(function (x) {
+        return String(x.requestId) === String(rec.requestId)
+          && String(x.proposerId || '') === String(rec.proposerId || '')
+          && String(x.recipientId || x.providerId || '') === String(rec.recipientId || rec.providerId || '')
+          && ['closed', 'rejected', 'cancelled'].indexOf(x.status) >= 0;
+      });
+      if (existing) {
+        existing.status = 'pending';
+        existing.closedAt = null;
+        existing.respondedAt = null;
+        existing.unitPrice = rec.unitPrice;
+        existing.priceUnit = rec.priceUnit;
+        existing.total = rec.total;
+        existing.machineId = rec.machineId;
+        existing.listingId = rec.listingId;
+        existing.location = rec.location;
+        rec = existing;
+      } else {
+        db.requestRecipients.push(rec);
+      }
       var eff = (db.requests || []).find(function (r) { return String(r.id) === String(plan.effectiveRequestId); });
       if (eff && eff.status !== 'completed') eff.status = 'pending';
       var anchor = (db.requests || []).find(function (r) { return String(r.id) === String(plan.requestId); });
@@ -402,7 +422,21 @@
       });
       if (request) request.status = 'accepted';
       db.deals = db.deals || [];
-      db.deals.push(plan.deal);
+      var cancelledDeal = db.deals.find(function (d) {
+        return String(d.requestId) === String(plan.requestId) && d.status === 'cancelled';
+      });
+      if (cancelledDeal && plan.deal) {
+        Object.keys(plan.deal).forEach(function (k) {
+          if (k === 'id') return;
+          cancelledDeal[k] = plan.deal[k];
+        });
+        cancelledDeal.status = 'agreed';
+        cancelledDeal.cancelledAt = null;
+        cancelledDeal.paymentStatus = plan.deal.paymentStatus || 'pending';
+        plan.deal = cancelledDeal;
+      } else {
+        db.deals.push(plan.deal);
+      }
       if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
       return Promise.resolve(Result.ok({
         deal: plan.deal,

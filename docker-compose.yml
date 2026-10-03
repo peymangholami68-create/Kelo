@@ -7,8 +7,8 @@ services:
       POSTGRES_USER: kelo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
+      # فقط داده؛ migrationها را initdb اجرا نکند (با migrate.js تداخل می‌سازد)
       - kelo_v061_pgdata:/var/lib/postgresql/data
-      - ./database/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kelo -d kelo"]
       interval: 5s
@@ -29,6 +29,7 @@ services:
       db:
         condition: service_healthy
     ports:
+      # بیرون: http://localhost:3001  | داخل کانتینر: :3000
       - "127.0.0.1:3001:3000"
 
 volumes:

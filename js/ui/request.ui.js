@@ -89,7 +89,7 @@
   global.renderMobileRequestBase = renderMobileRequestBase;
 
   function requestRecipientCount(requestId, status){
-      return db.requestRecipients.filter(x=>x.requestId===requestId && (!status || x.status===status)).length;
+      return qdb().requestRecipients.filter(x=>x.requestId===requestId && (!status || x.status===status)).length;
   }
 
   global.requestRecipientCount = requestRecipientCount;
@@ -126,7 +126,7 @@
       if(s === 'cancelled') return 'لغو شده';
       if(s === 'expired') return 'منقضی شده';
       if(s === 'agreed' || s === 'accepted' || s === 'in_progress') return 'توافق شده';
-      const hasPendingRecipients = db.requestRecipients.some(x => x.requestId === r.id && x.status === 'pending');
+      const hasPendingRecipients = qdb().requestRecipients.some(x => x.requestId === r.id && x.status === 'pending');
       if(hasPendingRecipients) return 'در حال بررسی';
       return 'ایجاد شده';
   }
@@ -675,7 +675,7 @@
   global.listingAvailableForRequest = listingAvailableForRequest;
 
   function getProviderIdentityFromListing(listing){
-      const ownerUser=db.users.find(u=>u.id===listing.userId);
+      const ownerUser=qdb().users.find(u=>u.id===listing.userId);
       return {
           providerId:listing.userId,
           provider:listing.providerName || ownerUser?.name || 'ارائه‌دهنده',
@@ -696,10 +696,10 @@
       if (window.KeloDomain && window.KeloDomain.eligibility && window.KeloDomain.eligibility.getEligibleProviders) {
           return window.KeloDomain.eligibility.getEligibleProviders({
               request: request,
-              listings: db.listings || [],
-              machines: db.machines || [],
-              users: db.users || [],
-              bookings: db.bookings || [],
+              listings: qdb().listings || [],
+              machines: qdb().machines || [],
+              users: qdb().users || [],
+              bookings: qdb().bookings || [],
               parseDate: parseStoredDate,
               geo: {
                   nearestCityFromCoords: typeof nearestCityFromCoords === 'function' ? nearestCityFromCoords : null,
@@ -712,7 +712,7 @@
       const {start,end}=getRequestDateRange(request);
       const seen=new Set();
       const result=[];
-      db.listings
+      qdb().listings
         .filter(l=>l.status==='active' && l.userId!==request.userId && l.service===request.service)
         .forEach(l=>{
             if(!listingMatchesRequest(l,request)) return;
@@ -724,10 +724,10 @@
             seen.add(key);
             result.push(p);
         });
-      db.machines
+      qdb().machines
         .filter(m=>m.services && m.services[request.service]!==undefined)
         .forEach(m=>{
-            const ownerUser=db.users.find(u=>u.name===m.owner);
+            const ownerUser=qdb().users.find(u=>u.name===m.owner);
             const providerId=ownerUser?.id || ('machine-owner:'+m.owner);
             if(providerId===request.userId) return;
             const machineKey='machine:'+m.id;
@@ -956,7 +956,7 @@ async function finalizeMobileForm(){
   function editRequest(requestId){
       const req=(window.KeloService && window.KeloService.query)
         ? window.KeloService.query.getMyRequest(requestId)
-        : db.requests.find(r=>r.id===requestId && r.userId===currentUser.id);
+        : qdb().requests.find(r=>r.id===requestId && r.userId===currentUser.id);
       if(!req || req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
           showToast('این درخواست دیگر قابل ویرایش نیست','error'); return;
       }

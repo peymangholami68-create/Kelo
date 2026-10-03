@@ -4,18 +4,14 @@
 (function (global) {
   'use strict';
 
-  function qdb() {
+    function qdb() {
     var Q = global.KeloService && global.KeloService.query;
-    if (Q) {
-      return {
-        requests: Q.requests(),
-        deals: Q.deals(),
-        requestRecipients: Q.recipients(),
-        machines: Q.machines(),
-        listings: Q.listings()
-      };
-    }
-    return global.db || { requests: [], deals: [], requestRecipients: [], machines: [], listings: [] };
+    if (Q && typeof Q.mirror === 'function') return Q.mirror();
+    if (typeof global.qdb === 'function' && global.qdb !== qdb) return global.qdb();
+    return global.db || {
+      requests: [], deals: [], users: [], listings: [], machines: [],
+      requestRecipients: [], bookings: [], reviews: [], payments: []
+    };
   }
 
 
@@ -188,37 +184,51 @@
 
   global.goBackFromOffersMap = goBackFromOffersMap;
 
-  function toggleOffersMap(){
+    function toggleOffersMap(){
       const map = document.getElementById('keloOffersMap');
+      const content = document.getElementById('keloRequestOffersContent');
+      const btn = document.getElementById('keloMapToggleBtn');
       const icon = document.getElementById('keloMapToggleIcon');
       const text = document.getElementById('keloMapToggleText');
-      if(!map || !icon || !text) return;
+      if(!map) return;
       const isHidden = (map.style.opacity === '0' || map.style.opacity === '' || map.style.opacity === '0.0');
       if(isHidden){
+          // Show map: cover list, capture all pointer events
           map.style.opacity = '1';
           map.style.pointerEvents = 'auto';
-          icon.textContent = '\u2715';
-          text.textContent = '\u0628\u0633\u062a\u0646 \u0646\u0642\u0634\u0647';
-          setTimeout(function(){
+          map.style.zIndex = '20';
+          if(content){
+              content.style.visibility = 'hidden';
+              content.setAttribute('aria-hidden', 'true');
+          }
+          if(icon) icon.textContent = '📋';
+          if(text) text.textContent = 'نمایش لیست';
+          requestAnimationFrame(function(){
               if(window._keloOffersMap){
                   try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
                   try{
                       if(window._keloOffersMap._keloLastBounds){
                           window._keloOffersMap.fitBounds(window._keloOffersMap._keloLastBounds, {padding:[40,40], animate:false});
                       }
-                  }catch(e){}
+                  }catch(e2){}
               }
-          }, 100);
+          });
           setTimeout(function(){
               if(window._keloOffersMap){
                   try{ window._keloOffersMap.invalidateSize(true); }catch(e){}
               }
-          }, 400);
+          }, 200);
       } else {
+          // Hide map: restore list
           map.style.opacity = '0';
           map.style.pointerEvents = 'none';
-          icon.textContent = '\uD83D\uDDFA';
-          text.textContent = '\u0646\u0645\u0627\u06cc\u0634 \u0646\u0642\u0634\u0647';
+          map.style.zIndex = '5';
+          if(content){
+              content.style.visibility = '';
+              content.removeAttribute('aria-hidden');
+          }
+          if(icon) icon.textContent = '🗺️';
+          if(text) text.textContent = 'نمایش نقشه';
       }
   }
 
@@ -336,11 +346,11 @@
           if(rec && rec.status==='pending'){
               action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
           }else if(rec && rec.status==='rejected'){
-              action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
+              action='<button type="button" class="btn btn-brand offer-item-btn" style="touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
           }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
               action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
           }else{
-              action='<button class="btn btn-brand offer-item-btn" onclick="event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
+              action='<button type="button" class="btn btn-brand offer-item-btn" style="touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
           }
           const service = o.service || req.service;
           let _subOpt = '';
@@ -394,7 +404,10 @@
           + '<div class="kelo-stat-cell"><div class="kelo-stat-num">' + toPersianDigits(_statRejected) + '</div><div class="kelo-stat-lbl">\u0631\u062f \u0634\u062f\u0647</div></div>'
           + '</div>';
       if(_isSameRequest){
+          var _scrollParent = _existingContent.closest('.mobile-sheet-body') || _existingContent.parentElement;
+          var _scrollTop = _scrollParent ? _scrollParent.scrollTop : 0;
           _existingContent.innerHTML = _statsHtml + providersHtml;
+          if(_scrollParent) _scrollParent.scrollTop = _scrollTop;
           requestAnimationFrame(function(){ try{ initOffersMap(req, candidates); }catch(e){ console.warn('initOffersMap refresh failed', e); } });
           return;
       }

@@ -1,5 +1,5 @@
 /**
- * KELO — Application bootstrap (Phase 18)
+ * KELO — Application bootstrap (Phase 19B)
  *
  * Single entry: KeloApp.init()
  *
@@ -172,8 +172,11 @@
   }
 
   async function restoreSessionAndPaint() {
-    if (global.KeloBackend && typeof global.KeloBackend.init === 'function') {
-      await global.KeloBackend.init();
+    // Phase 19B: no direct KeloBackend — go through Service/Sync
+    if (global.KeloService && typeof global.KeloService.bootstrap === 'function') {
+      await global.KeloService.bootstrap();
+    } else if (global.KeloSync && typeof global.KeloSync.initRuntime === 'function') {
+      await global.KeloSync.initRuntime();
     }
 
     var authApi = global.KeloService && global.KeloService.auth;

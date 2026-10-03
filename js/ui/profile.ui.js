@@ -75,7 +75,7 @@
   function mobileAccountProfileMarkup(){
       const name = (currentUser && currentUser.name && currentUser.name.trim()) ? currentUser.name.trim() : 'کاربر';
       const phone = currentUser && currentUser.phone ? toPersianDigits(currentUser.phone) : '—';
-      const completedDeals = db.deals.filter(d => (d.userId===currentUser.id || d.providerId===currentUser.id) && d.status==='completed').length;
+      const completedDeals = qdb().deals.filter(d => (d.userId===currentUser.id || d.providerId===currentUser.id) && d.status==='completed').length;
       const rating = getUserRating(currentUser.id);
       const ratingDisplay = rating ? (toPersianDigits(rating.average.toFixed(1)) + ' (' + toPersianDigits(rating.count) + '+)') : '—';
 
@@ -113,7 +113,7 @@
 
   function mobileAccountInvoiceMarkup(){
       // فقط کارهای انجام‌شده (status=completed)
-      const completedDeals = (db.deals||[]).filter(function(d){
+      const completedDeals = (qdb().deals||[]).filter(function(d){
           return isDealForUser(d) && d.status === 'completed';
       }).slice().sort(function(a,b){
           return String(b.completedAt || b.createdAt || '').localeCompare(String(a.completedAt || a.createdAt || ''));
@@ -128,7 +128,7 @@
           .reduce(function(sum,d){ return sum + (Number(d.total)||0); }, 0);
 
       const cards = completedDeals.length ? completedDeals.map(function(d){
-          const req = db.requests.find(function(r){ return r.id === d.requestId; });
+          const req = qdb().requests.find(function(r){ return r.id === d.requestId; });
           const isFarmer = String(d.userId) === String(currentUser.id);
           const cp = dealCounterparty(d);
           const cpName = (cp && cp.name) ? cp.name : (d.counterparty || '—');
@@ -207,11 +207,11 @@
           : '';
 
       const bodyHtml = '<div class="mobile-account-body">'
-          + '<form class="profile-edit-form" onsubmit="saveProfileEdit(event)">'
+          + '<form class="profile-edit-form" novalidate onsubmit="return saveProfileEdit(event)">'
           +   '<div class="profile-avatar-big">'+farmerAvatarSvg()+'</div>'
-          +   '<div class="profile-edit-field"><label>نام کامل <span style="color:red">*</span></label><input id="editName" class="profile-pill-input" type="text" value="'+escapeHtml(name)+'" placeholder="نام کامل" required></div>'
-          +   '<div class="profile-edit-field"><label>شماره موبایل <span style="color:red">*</span></label><input id="editPhone" class="profile-pill-input" type="tel" inputmode="numeric" maxlength="11" value="'+escapeHtml(phone)+'" placeholder="شماره موبایل" required></div>'
-          +   '<div class="profile-edit-field"><label>کد ملی <span style="color:red">*</span></label><input id="editNationalId" class="profile-pill-input" type="text" inputmode="numeric" maxlength="10" value="'+escapeHtml(nid)+'" placeholder="کد ملی" required></div>'
+          +   '<div class="profile-edit-field"><label>نام کامل <span style="color:red">*</span></label><input id="editName" class="profile-pill-input" type="text" value="'+escapeHtml(name)+'" placeholder="نام کامل" autocomplete="name"></div>'
+          +   '<div class="profile-edit-field"><label>شماره موبایل <span style="color:red">*</span></label><input id="editPhone" class="profile-pill-input" type="tel" inputmode="numeric" maxlength="11" value="'+escapeHtml(phone)+'" placeholder="شماره موبایل" autocomplete="tel"></div>'
+          +   '<div class="profile-edit-field"><label>کد ملی <span style="color:red">*</span></label><input id="editNationalId" class="profile-pill-input" type="text" inputmode="numeric" maxlength="10" value="'+escapeHtml(nid)+'" placeholder="کد ملی" autocomplete="off"></div>'
           +   '<div class="profile-map-wrap">'
           +     '<button type="button" class="profile-map-btn" onclick="activateProfileMapPicker()" aria-label="انتخاب موقعیت">'
           +       mapInner + cityBox
@@ -243,8 +243,8 @@
         return;
       }
       if(section==='activities'){
-        const requests=db.requests.filter(r=>r.userId===currentUser.id).map(r=>({...r,__kind:'request'}));
-        const listings=db.listings.filter(l=>l.userId===currentUser.id).map(l=>({...l,__kind:'listing'}));
+        const requests=qdb().requests.filter(r=>r.userId===currentUser.id).map(r=>({...r,__kind:'request'}));
+        const listings=qdb().listings.filter(l=>l.userId===currentUser.id).map(l=>({...l,__kind:'listing'}));
         const items=[...requests,...listings].filter(item=>mobileActivityFilterMatches(item,mobileActivityFilter));
         const filters='<div class="mobile-account-filter-row"><button type="button" class="mobile-account-filter '+(mobileActivityFilter==='all'?'active':'')+'" onclick="setMobileActivityFilter(\'all\')">همه</button><button type="button" class="mobile-account-filter '+(mobileActivityFilter==='progress'?'active':'')+'" onclick="setMobileActivityFilter(\'progress\')">در حال انجام</button><button type="button" class="mobile-account-filter '+(mobileActivityFilter==='completed'?'active':'')+'" onclick="setMobileActivityFilter(\'completed\')">تکمیل شده</button></div>';
         const cards=items.length?items.map(item=>{
@@ -257,9 +257,9 @@
         return;
       }
       if(section==='deals'){
-        const receivedOffers=db.requestRecipients.filter(o=>o.providerId===currentUser.id && o.status==='pending');
-        const myDealsList=db.deals.filter(d=>d.userId===currentUser.id || d.providerId===currentUser.id);
-        const offersHtml=receivedOffers.length?receivedOffers.map(o=>{ const req=db.requests.find(r=>r.id===o.requestId); return '<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(req?.service||o.service))+'</strong><span class="activity-meta">'+escapeHtml(requestDate(req||{}))+' · '+(o.total?formatMoney(o.total):'توافقی')+'</span></div><button class="btn btn-primary" style="min-height:40px;padding:6px 12px;font-size:13px" onclick="acceptOffer(\''+o.id+'\')">پذیرش</button></div></div>'; }).join(''):'<p class="text-muted">پیشنهاد جدیدی وجود ندارد.</p>';
+        const receivedOffers=qdb().requestRecipients.filter(o=>o.providerId===currentUser.id && o.status==='pending');
+        const myDealsList=qdb().deals.filter(d=>d.userId===currentUser.id || d.providerId===currentUser.id);
+        const offersHtml=receivedOffers.length?receivedOffers.map(o=>{ const req=qdb().requests.find(r=>r.id===o.requestId); return '<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-main"><strong>'+escapeHtml(serviceName(req?.service||o.service))+'</strong><span class="activity-meta">'+escapeHtml(requestDate(req||{}))+' · '+(o.total?formatMoney(o.total):'توافقی')+'</span></div><button class="btn btn-primary" style="min-height:40px;padding:6px 12px;font-size:13px" onclick="acceptOffer(\''+o.id+'\')">پذیرش</button></div></div>'; }).join(''):'<p class="text-muted">پیشنهاد جدیدی وجود ندارد.</p>';
         const dealsHtml=myDealsList.length?myDealsList.map(d=>'<div class="mobile-activity-card"><div class="activity-row"><div class="mobile-activity-main"><strong>'+serviceName(d.service)+'</strong><span class="activity-meta">'+escapeHtml(d.counterparty||'—')+' · '+(d.total?formatMoney(d.total):'—')+'</span></div></div></div>').join(''):'<p class="text-muted">هنوز توافقی ثبت نشده است.</p>';
         sheet.innerHTML=mobileAccountInnerHeader('سفارش‌ها و توافق‌ها')+'<div class="mobile-account-body"><h3 class="mobile-account-section-label">درخواست‌های پیشنهادی</h3>'+offersHtml+'<h3 class="mobile-account-section-label" style="margin-top:20px">توافق‌های من</h3>'+dealsHtml+'</div>';
         attachSheetDragOnce(sheet);
@@ -367,10 +367,10 @@
 
   function openInvoiceDetail(dealId){
       if(!currentUser) return;
-      var d = (db.deals || []).find(function(x){ return String(x.id) === String(dealId) && isDealForUser(x); });
+      var d = (qdb().deals || []).find(function(x){ return String(x.id) === String(dealId) && isDealForUser(x); });
       if(!d || d.status !== 'completed'){ showToast('فاکتور پیدا نشد','error'); return; }
       window.__keloInvoiceDetailDealId = String(dealId);
-      var req = (db.requests || []).find(function(r){ return r.id === d.requestId; });
+      var req = (qdb().requests || []).find(function(r){ return r.id === d.requestId; });
       var parties = dealPartyNames(d);
       var service = serviceName((req && req.service) || d.service);
       var city = (function(){
@@ -557,14 +557,17 @@ async function saveFirstProfile(e){
   global.saveProfile = saveProfile;
 
   async function saveProfileEdit(e){
-      e.preventDefault();
-      if (!currentUser) return;
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (!currentUser) return false;
       const nameEl = document.getElementById('editName');
       const phoneEl = document.getElementById('editPhone');
       const nidEl = document.getElementById('editNationalId');
       const name = (nameEl ? nameEl.value : '').trim();
       const phoneRaw = (phoneEl ? phoneEl.value : '').trim();
       const nidRaw = (nidEl ? nidEl.value : '').trim();
+      if (!name) { showToast('نام کامل را وارد کنید','error'); if (nameEl) nameEl.focus(); return false; }
+      if (!phoneRaw) { showToast('شماره موبایل را وارد کنید','error'); if (phoneEl) phoneEl.focus(); return false; }
+      if (!nidRaw) { showToast('کد ملی را وارد کنید','error'); if (nidEl) nidEl.focus(); return false; }
 
       const profile = Object.assign({}, currentUser.profile || {});
       const profileLocation = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);

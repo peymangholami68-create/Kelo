@@ -197,17 +197,6 @@ create table if not exists notifications (
   created_at timestamptz not null default now()
 );
 
-create table if not exists reviews (
-  id uuid primary key default gen_random_uuid(),
-  deal_id uuid not null references deals(id) on delete cascade,
-  reviewer_id uuid not null references users(id) on delete restrict,
-  reviewee_id uuid not null references users(id) on delete restrict,
-  rating integer not null check (rating between 1 and 5),
-  comment text,
-  created_at timestamptz not null default now(),
-  unique (deal_id, reviewer_id)
-);
-
 create table if not exists support_tickets (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete restrict,

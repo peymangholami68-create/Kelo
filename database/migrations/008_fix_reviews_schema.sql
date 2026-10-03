@@ -1,5 +1,5 @@
--- Reviews schema used by server/routes/marketplace.js
--- DROP first so we never keep the legacy 001 shape (reviewer_id/reviewee_id/rating).
+-- Repair reviews if an older 001/005 left the legacy schema in place.
+-- Safe on fresh installs (005 already created correct table; we recreate idempotently).
 DROP TABLE IF EXISTS reviews CASCADE;
 
 CREATE TABLE reviews (

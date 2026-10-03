@@ -319,8 +319,93 @@ function onMobilePlusClick(){
 function renderMobileHome(){
     const c=document.getElementById('appContent');
     c.className='content';
-    c.innerHTML='<div class="mobile-home-page"><div class="mobile-home-hero"><img src="https://cdn.imgurl.ir/uploads/s3128_home.jpg" alt="کِلو" onerror="this.style.background=\'linear-gradient(135deg,#9dc457,#d4b75c)\';this.removeAttribute(\'src\')"><h2>کِلو</h2><p>دسترسی سریع به ادوات کشاورزی<br>و اپراتورهای متخصص در منطقه شما</p><button type="button" class="mobile-home-action" onclick="onMobilePlusClick()">ثبت درخواست</button></div></div>';
+    const banners = [
+        { src: 'https://cdn.imgurl.ir/uploads/u42901_b._farmer.jpg', alt: 'کشاورز' },
+        { src: 'https://cdn.imgurl.ir/uploads/x229369_b._machindar.jpg', alt: 'ماشین‌دار' },
+        { src: 'https://cdn.imgurl.ir/uploads/b97617_B._online.jpg', alt: 'آنلاین' }
+    ];
+    const nB = banners.length;
+    const slidePct = (100 / nB).toFixed(6);
+    const slides = banners.map(function(b, i){
+        return '<div class="home-banner-slide' + (i === 0 ? ' is-active' : '') + '" data-index="' + i + '" style="flex:0 0 ' + slidePct + '%;width:' + slidePct + '%;max-width:' + slidePct + '%">'
+            + '<img src="' + b.src + '" alt="' + b.alt + '" loading="' + (i === 0 ? 'eager' : 'lazy') + '"'
+            + ' onerror="this.style.background=\'linear-gradient(135deg,#9dc457,#d4b75c)\';this.removeAttribute(\'src\')">'
+            + '</div>';
+    }).join('');
+    const dots = banners.map(function(_, i){
+        return '<button type="button" class="home-banner-dot' + (i === 0 ? ' is-active' : '') + '" data-index="' + i + '" aria-label="بنر ' + (i + 1) + '"></button>';
+    }).join('');
+    const n = banners.length;
+    c.innerHTML = '<div class="mobile-home-page">'
+        + '<div class="home-banner-slider" id="homeBannerSlider">'
+        +   '<div class="home-banner-viewport">'
+        +     '<div class="home-banner-track" id="homeBannerTrack" style="width:' + (n * 100) + '%">' + slides + '</div>'
+        +   '</div>'
+        +   '<div class="home-banner-dots" id="homeBannerDots">' + dots + '</div>'
+        + '</div>'
+        + '</div>';
+    initHomeBannerSlider();
 }
+
+function initHomeBannerSlider(){
+    const track = document.getElementById('homeBannerTrack');
+    const dotsWrap = document.getElementById('homeBannerDots');
+    if (!track || !dotsWrap) return;
+    if (window._homeBannerTimer) {
+        clearInterval(window._homeBannerTimer);
+        window._homeBannerTimer = null;
+    }
+    const slides = Array.prototype.slice.call(track.querySelectorAll('.home-banner-slide'));
+    const dots = Array.prototype.slice.call(dotsWrap.querySelectorAll('.home-banner-dot'));
+    if (!slides.length) return;
+    let index = 0;
+    let touchStartX = null;
+
+    function goTo(i){
+        index = (i + slides.length) % slides.length;
+        slides.forEach(function(s, n){ s.classList.toggle('is-active', n === index); });
+        dots.forEach(function(d, n){ d.classList.toggle('is-active', n === index); });
+        // Track is 300% wide (3 slides); move by one-third per slide
+        var step = 100 / slides.length;
+        track.style.transform = 'translateX(' + (-index * step) + '%)';
+    }
+
+    dots.forEach(function(dot){
+        dot.addEventListener('click', function(){
+            const i = Number(dot.getAttribute('data-index') || 0);
+            goTo(i);
+            restart();
+        });
+    });
+
+    const viewport = track.parentElement;
+    if (viewport) {
+        viewport.addEventListener('touchstart', function(e){
+            if (!e.touches || !e.touches[0]) return;
+            touchStartX = e.touches[0].clientX;
+        }, { passive: true });
+        viewport.addEventListener('touchend', function(e){
+            if (touchStartX == null || !e.changedTouches || !e.changedTouches[0]) return;
+            const dx = e.changedTouches[0].clientX - touchStartX;
+            touchStartX = null;
+            if (Math.abs(dx) < 40) return;
+            // RTL: swipe right → previous, swipe left → next
+            if (dx > 0) goTo(index - 1);
+            else goTo(index + 1);
+            restart();
+        }, { passive: true });
+    }
+
+    function restart(){
+        if (window._homeBannerTimer) clearInterval(window._homeBannerTimer);
+        window._homeBannerTimer = setInterval(function(){ goTo(index + 1); }, 4500);
+    }
+
+    goTo(0);
+    restart();
+}
+window.initHomeBannerSlider = initHomeBannerSlider;
+
 
 
 

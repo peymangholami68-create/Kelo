@@ -35,10 +35,10 @@
 
   function upsertAuthenticatedUserMirror(user){
       if(!user || !user.id) return user;
-      let local = db.users.find(function(u){ return String(u.id) === String(user.id); });
+      let local = qdb().users.find(function(u){ return String(u.id) === String(user.id); });
       if(!local){
           local = {};
-          db.users.push(local);
+          qdb().users.push(local);
       }
       Object.assign(local, cloneObject(user));
       if(!Array.isArray(local.systemRoles)) local.systemRoles=[];
@@ -119,10 +119,10 @@
       c.className = 'content';
       c.innerHTML = '<div class="mobile-home-page">'
           +'<div class="stats" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">'
-          +'<div class="stat"><small>کاربران</small><strong>'+fmtNum(db.users.length)+'</strong></div>'
-          +'<div class="stat"><small>خدمات</small><strong>'+fmtNum(db.listings.length)+'</strong></div>'
-          +'<div class="stat"><small>نیازها</small><strong>'+fmtNum(db.requests.length)+'</strong></div>'
-          +'<div class="stat"><small>توافق‌ها</small><strong>'+fmtNum(db.deals.length)+'</strong></div>'
+          +'<div class="stat"><small>کاربران</small><strong>'+fmtNum(qdb().users.length)+'</strong></div>'
+          +'<div class="stat"><small>خدمات</small><strong>'+fmtNum(qdb().listings.length)+'</strong></div>'
+          +'<div class="stat"><small>نیازها</small><strong>'+fmtNum(qdb().requests.length)+'</strong></div>'
+          +'<div class="stat"><small>توافق‌ها</small><strong>'+fmtNum(qdb().deals.length)+'</strong></div>'
           +'</div>'
           +'<button type="button" class="btn btn-outline btn-block" onclick="logout()">خروج از حساب مدیر</button>'
           +'</div>';

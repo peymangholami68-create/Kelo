@@ -6,7 +6,7 @@
   'use strict';
 
   function getMyDeals(){
-      return db.deals
+      return qdb().deals
           .filter(d=>d.userId===currentUser.id || d.providerId===currentUser.id)
           .slice()
           .sort((a,b)=>String(b.createdAt||b.created||'').localeCompare(String(a.createdAt||a.created||'')));
@@ -19,7 +19,7 @@
   global.isDealForUser = isDealForUser;
 
   function dealEndDate(deal){
-      const req=db.requests.find(r=>r.id===deal.requestId);
+      const req=qdb().requests.find(r=>r.id===deal.requestId);
       return req ? (parseStoredDate(req.data?.dateEnd || req.data?.dateStart || req.data?.date) || null) : null;
   }
 
@@ -40,13 +40,13 @@
           if(deal.providerName || deal.providerPhone){
               return { name: deal.providerName || '—', phone: deal.providerPhone || '—' };
           }
-          const u = db.users.find(function(x){ return String(x.id) === String(deal.providerId); });
+          const u = qdb().users.find(function(x){ return String(x.id) === String(deal.providerId); });
           return u || null;
       }
       if(deal.requesterName || deal.requesterPhone){
           return { name: deal.requesterName || '—', phone: deal.requesterPhone || '—' };
       }
-      const u = db.users.find(function(x){ return String(x.id) === String(deal.userId); });
+      const u = qdb().users.find(function(x){ return String(x.id) === String(deal.userId); });
       return u || null;
   }
 
@@ -85,7 +85,7 @@
   global.renderDealCounterparty = renderDealCounterparty;
 
   function openDealProblemReport(dealId){
-      const d = db.deals.find(function(x){ return String(x.id) === String(dealId); });
+      const d = qdb().deals.find(function(x){ return String(x.id) === String(dealId); });
       if(!d) return;
       const isFarmer = String(d.userId) === String(currentUser.id);
       const isProvider = String(d.providerId) === String(currentUser.id);
@@ -114,7 +114,7 @@
       let reasonsHtml = '';
       reasons.forEach(function(r, idx){
           reasonsHtml += '<label class="deal-problem-option">'
-              + '<input type="radio" name="keloProblemReason" value="' + r.id + '"' + (idx === 0 ? ' checked' : '') + '>'
+              + '<input type="radio" name="keloProblemReason" value="' + r.id + '">'
               + '<span>' + escapeHtml(r.label) + '</span></label>';
       });
       const backdrop = document.createElement('div');
@@ -144,7 +144,7 @@
   global.closeDealProblemReport = closeDealProblemReport;
 
   function openDealReport(dealId){
-      const d=db.deals.find(x=>x.id===dealId);
+      const d=qdb().deals.find(x=>x.id===dealId);
       if(!d) return;
       const isFarmer=String(d.userId)===String(currentUser.id);
       const isProvider=String(d.providerId)===String(currentUser.id);
@@ -218,7 +218,7 @@
 
   function hasUserReviewedDeal(dealId){
       if (!currentUser) return false;
-      return (db.reviews || []).some(function(r){
+      return (qdb().reviews || []).some(function(r){
           return String(r.dealId) === String(dealId) && String(r.userId) === String(currentUser.id);
       });
   }
@@ -242,11 +242,19 @@
       const deals=getMyDeals();
       if(!deals.length) return keloEmptyStateHtml('توافقی ثبت نشده', 'بعد از پذیرش یک درخواست، توافق شما اینجا نمایش داده می‌شود.');
       return deals.map(d=>{
-          const req=db.requests.find(r=>r.id===d.requestId);
+          const req=qdb().requests.find(r=>r.id===d.requestId);
           const service=req ? req.service : d.service;
           const fakeReq = req || { data: Object.assign({}, d.requestData || {}, { serviceLocation: d.requestLocation }), area_ha: d.requestArea };
           const city = requestCityName(fakeReq);
-          const date = (req ? requestCardDate(req) : (d.dateStart ? (d.dateStart===d.dateEnd || !d.dateEnd ? humanJalaliDate(d.dateStart) : humanJalaliDate(d.dateStart)+' تا '+humanJalaliDate(d.dateEnd)) : '—'));
+          let _dateReq = req;
+          if (req && req.requestKind === 'provide') {
+              _dateReq = (qdb().requests || []).filter(function(r){
+                  return r.requestKind === 'need' && r.service === req.service
+                    && String(r.userId) === String(d.userId)
+                    && r.status !== 'cancelled' && r.status !== 'completed';
+              })[0] || req;
+          }
+          const date = (_dateReq ? requestCardDate(_dateReq) : (d.dateStart ? (d.dateStart===d.dateEnd || !d.dateEnd ? humanJalaliDate(d.dateStart) : humanJalaliDate(d.dateStart)+' تا '+humanJalaliDate(d.dateEnd)) : '—'));
           const isFarmer=String(d.userId)===String(currentUser.id);
           const machine=(req && req.data && req.data.machineType) ? req.data.machineType : (d.providerMachineType || '');
           const area=(req && req.data && (req.data.area || req.data.amount)) ? (req.data.area || req.data.amount) : (fakeReq.area_ha || null);
@@ -320,16 +328,33 @@
   function collectScheduledItems(){
       if(!currentUser) return [];
       const rows = [];
-      db.deals.forEach(d => {
+      qdb().deals.forEach(d => {
           if(d.userId !== currentUser.id && d.providerId !== currentUser.id) return;
           if(d.status === 'cancelled' || d.status === 'completed') return;
-          const req = db.requests.find(r => r.id === d.requestId);
-          // تاریخ از deal یا request (نیاز کشاورز)
-          let startIso = (req && req.data && (req.data.dateStart || req.data.date)) || d.dateStart || null;
-          let endIso = (req && req.data && req.data.dateEnd) || d.dateEnd || startIso;
-          if(!startIso && d.requestData){
+          const req = qdb().requests.find(r => String(r.id) === String(d.requestId));
+          // Prefer farmer NEED dates (not provider availability window)
+          let needReq = req;
+          if (req && req.requestKind === 'provide') {
+              needReq = (qdb().requests || []).filter(function(r){
+                  return r.requestKind === 'need'
+                    && r.service === req.service
+                    && (String(r.userId) === String(d.userId) || String(r.userId) === String(d.requesterId))
+                    && r.status !== 'cancelled' && r.status !== 'completed';
+              }).sort(function(a,b){ return new Date(b.createdAt||0) - new Date(a.createdAt||0); })[0] || req;
+          }
+          let startIso = null;
+          let endIso = null;
+          if (needReq) {
+              startIso = (needReq.data && (needReq.data.dateStart || needReq.data.date)) || needReq.dateStart || null;
+              endIso = (needReq.data && needReq.data.dateEnd) || needReq.dateEnd || startIso;
+          }
+          if (!startIso && d.requestData) {
               startIso = d.requestData.dateStart || d.requestData.date || null;
               endIso = d.requestData.dateEnd || startIso;
+          }
+          if (!startIso) {
+              startIso = d.dateStart || null;
+              endIso = d.dateEnd || startIso;
           }
           if(!startIso) return;
           const startDate = parseStoredDate(startIso);
@@ -339,7 +364,18 @@
           const counterparty = String(d.userId) === String(currentUser.id)
               ? (d.providerName || d.counterparty || 'ارائه‌دهنده')
               : (d.requesterName || (req && req.requesterName) || 'کشاورز');
-          const city = req ? requestCityName(req) : (d.location || '');
+          // Prefer request location; for provider calendar, request may be missing in snapshot —
+          // fall back to deal.location / requestData / requestLocation from server mapping.
+          let city = '';
+          if (req && typeof requestCityName === 'function') city = requestCityName(req) || '';
+          if (!city && d.location) city = String(d.location);
+          if (!city && d.requestData && typeof requestCityName === 'function') {
+              city = requestCityName({ data: d.requestData }) || '';
+          }
+          if (!city && d.requestLocation) {
+              const rl = d.requestLocation;
+              city = (rl.label || rl.city || rl.province || '') || '';
+          }
           const title = dealInvoiceServiceTitle(d, req);
           rows.push({
               dealId: d.id,
@@ -372,8 +408,6 @@
       return upcoming.map(function(it){
           const p = getJalaliParts(it.start);
           const dateLabel = formatDealRangeDate(it.startIso, it.endIso);
-          const tomorrow = new Date(); tomorrow.setHours(0,0,0,0); tomorrow.setDate(tomorrow.getDate() + 1);
-          const isTomorrow = it.start.getTime() === tomorrow.getTime() || (it.start <= tomorrow && it.end >= tomorrow);
           const locLine = it.city
               ? '<div class="schedule-card-line"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(it.city) + '</div>'
               : '';
@@ -384,7 +418,6 @@
               +   '<strong>' + escapeHtml(it.title || serviceName(it.service)) + '</strong>'
               +   locLine
               +   dateLine
-              +   (isTomorrow ? '<span class="schedule-card-role" style="background:#FBEDD3;color:#B06F0F">⏰ یادآوری: فردا</span>' : '')
               + '</div>'
               + '</div>';
       }).join('');
@@ -448,7 +481,7 @@
 
   function getMyReviewAverageForDeal(dealId){
       if(!currentUser) return null;
-      var rev = (db.reviews || []).find(function(r){
+      var rev = (qdb().reviews || []).find(function(r){
           return String(r.dealId) === String(dealId) && String(r.userId) === String(currentUser.id);
       });
       if(!rev || !rev.ratings) return null;
@@ -463,11 +496,11 @@
       var providerName = deal.providerName || '';
       var requesterName = deal.requesterName || '';
       if(!providerName){
-          var pu = (db.users || []).find(function(x){ return String(x.id) === String(deal.providerId); });
+          var pu = (qdb().users || []).find(function(x){ return String(x.id) === String(deal.providerId); });
           providerName = pu ? (pu.name || '—') : '—';
       }
       if(!requesterName){
-          var ru = (db.users || []).find(function(x){ return String(x.id) === String(deal.userId); });
+          var ru = (qdb().users || []).find(function(x){ return String(x.id) === String(deal.userId); });
           requesterName = ru ? (ru.name || '—') : '—';
       }
       return { providerName: providerName || '—', requesterName: requesterName || '—' };
@@ -476,9 +509,9 @@
   global.dealPartyNames = dealPartyNames;
 
   function routeToDeal(dealId){
-      const d=db.deals.find(x=>x.id===dealId && x.providerId===currentUser.id);
+      const d=qdb().deals.find(x=>x.id===dealId && x.providerId===currentUser.id);
       if(!d) return;
-      const req=db.requests.find(r=>r.id===d.requestId);
+      const req=qdb().requests.find(r=>r.id===d.requestId);
       if(!req){ showToast('درخواست پیدا نشد','error'); return; }
       openRequestLocationMap(req.id);
   }

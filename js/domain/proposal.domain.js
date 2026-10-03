@@ -216,6 +216,14 @@
       return { ok: false, code: 'CONFLICT', message: 'این درخواست قبلاً توافق شده است', closeRecipient: true };
     }
 
+    // Dates must come from farmer NEED request, not provider availability window
+    var dateReq = resolveEffectiveRequest(ctx.requests || [], request, userId);
+    if (!dateReq || dateReq.requestKind === 'provide') {
+      dateReq = resolveEffectiveRequest(ctx.requests || [], request, request.userId) || request;
+    }
+    var _d = (dateReq && dateReq.data) || {};
+    var _start = _d.dateStart || _d.date || dateReq.dateStart || (request.data && (request.data.dateStart || request.data.date)) || null;
+    var _end = _d.dateEnd || _d.dateStart || _d.date || dateReq.dateEnd || _start;
     var booking = {
       id: 'b' + Date.now() + Math.random().toString(36).slice(2, 7),
       requestId: request.id,
@@ -223,8 +231,8 @@
       requesterId: request.userId,
       machineId: recipient.machineId,
       listingId: recipient.listingId || null,
-      start: (request.data && (request.data.dateStart || request.data.date)) || null,
-      end: (request.data && (request.data.dateEnd || request.data.dateStart || request.data.date)) || null,
+      start: _start,
+      end: _end,
       status: 'confirmed',
       createdAt: new Date().toISOString()
     };
@@ -242,6 +250,9 @@
       counterparty: ctx.userName || '',
       paymentStatus: 'pending',
       status: 'agreed',
+      dateStart: _start,
+      dateEnd: _end,
+      requestData: (dateReq && dateReq.data) || (request.data || null),
       createdAt: new Date().toISOString()
     };
 

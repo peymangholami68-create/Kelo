@@ -61,7 +61,7 @@
   function openPaymentOptions(dealId){
       const d=(window.KeloService && window.KeloService.query)
         ? window.KeloService.query.getMyDeal(dealId)
-        : db.deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
+        : qdb().deals.find(x=>x.id===dealId && String(x.userId)===String(currentUser.id));
       if(!d) return;
       if(d.paymentStatus==='paid'){ showToast('این توافق قبلاً پرداخت شده است','success'); return; }
       const el=document.getElementById('keloPaymentOptions'); if(el) el.remove();

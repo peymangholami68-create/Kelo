@@ -1,18 +1,40 @@
 /**
- * KELO — Server snapshot sync helper (Phase 8)
- * UI still owns applyServerSnapshot + db mirror; this centralizes mode checks.
+ * KELO — Sync / runtime bootstrap (Phase 19B)
+ *
+ * Only this module (and ApiAdapter) may talk to KeloBackend for transport.
+ * KeloApp and UI should not call KeloBackend directly.
  */
 (function (global) {
   'use strict';
 
-  function isServer() {
-    if (global.KeloService && typeof global.KeloService.mode === 'function') {
-      return global.KeloService.mode() === 'server';
+  /**
+   * Detect Local vs Server (health check). Idempotent.
+   * @returns {Promise<'local'|'server'|'server-error'>}
+   */
+  async function initRuntime() {
+    var b = global.KeloBackend;
+    if (b && typeof b.init === 'function') {
+      return b.init();
     }
+    return 'local';
+  }
+
+  function isServer() {
     var b = global.KeloBackend;
     return !!(b && typeof b.isServerMode === 'function' && b.isServerMode());
   }
 
+  function getMode() {
+    var b = global.KeloBackend;
+    if (b && typeof b.getMode === 'function') return b.getMode();
+    if (isServer()) return 'server';
+    return 'local';
+  }
+
+  /**
+   * Load marketplace snapshot from server when in server mode.
+   * @returns {Promise<object|null>}
+   */
   async function bootstrapSnapshot() {
     if (!isServer()) return null;
     var b = global.KeloBackend;
@@ -21,7 +43,9 @@
   }
 
   global.KeloSync = {
+    initRuntime: initRuntime,
     isServer: isServer,
+    getMode: getMode,
     bootstrapSnapshot: bootstrapSnapshot
   };
 })(typeof window !== 'undefined' ? window : globalThis);

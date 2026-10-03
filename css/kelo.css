@@ -283,11 +283,16 @@ footer{padding:30px 0;text-align:center;background:#ffffff;border-top:1px solid 
 
 .mobile-app-topbar,.mobile-bottom-nav,.mobile-account-trigger{display:none}
 .mobile-home-page{padding:18px var(--kelo-page-pad-x) 26px;min-height:100%;background:#FFFFFF}
-.mobile-home-hero{background:#F2F2F2;border:0;border-radius:24px;padding:20px 18px 22px;box-shadow:0 8px 24px rgba(0,0,0,.04);text-align:center}
-.mobile-home-hero img{width:100%;height:190px;display:block;object-fit:cover;border-radius:18px;background:#dfe7cc;margin:0 0 20px 0}
-.mobile-home-hero h2{margin:0 0 10px;color:var(--brand-gold);font-size:38px;font-weight:900;line-height:1.3;letter-spacing:-0.5px}
-.mobile-home-hero p{margin:0 0 22px;color:#72776d;font-size:13.5px;font-weight:500;line-height:2}
-.mobile-home-action{margin-top:0;width:100%;min-height:52px;border:0;border-radius:15px;background:var(--brand-gold);color:#fff;font:800 16px Vazirmatn,Tahoma,Arial,sans-serif}
+.home-banner-slider{position:relative;width:100%;border-radius:24px;overflow:hidden;background:transparent;box-shadow:0 8px 24px rgba(0,0,0,.06);direction:ltr}
+.home-banner-viewport{width:100%;overflow:hidden;border-radius:24px;touch-action:pan-y;direction:ltr}
+.home-banner-track{display:flex;flex-direction:row;width:300%;transition:transform .4s ease;will-change:transform;direction:ltr}
+.home-banner-slide{flex:0 0 33.333333%;width:33.333333%;max-width:33.333333%;position:relative;background:#e8eedc}
+.home-banner-slide img{width:100%;height:auto;display:block;object-fit:contain;object-position:center center;background:#e8eedc;vertical-align:top}
+.home-banner-dots{position:absolute;left:0;right:0;bottom:12px;z-index:3;display:flex;justify-content:center;align-items:center;gap:8px;padding:0;margin:0;background:transparent;pointer-events:none}
+.home-banner-dot{pointer-events:auto;width:8px;height:8px;border-radius:50%;border:0;padding:0;background:rgba(255,255,255,.55);box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer;transition:background .2s,transform .2s}
+.home-banner-dot.is-active{background:#fff;transform:scale(1.25)}
+.mobile-home-hero{display:none}
+.mobile-home-action{display:none}
 .mobile-empty-state{padding:38px 18px;text-align:center;color:#72776d;font-size:14px;line-height:2}
 .mobile-success-state{flex:1 1 0;min-height:0;padding:60px 22px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#fff;width:100%;box-sizing:border-box}
 .mobile-success-state .success-icon{width:80px;height:80px;border-radius:50%;background:#e6f6ec;color:#2b9a5e;font-size:42px;font-weight:700;display:grid;place-items:center;margin:0 auto 20px;box-shadow:0 8px 24px rgba(43,154,94,.15)}

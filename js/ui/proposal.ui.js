@@ -6,7 +6,7 @@
   'use strict';
 
   function mobileProposalRequests(){
-      return db.requests
+      return qdb().requests
           .filter(r=>r.userId===currentUser.id)
           .slice()
           .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
@@ -15,10 +15,10 @@
   global.mobileProposalRequests = mobileProposalRequests;
 
   function getMyReceivedOffers(){
-      return db.requestRecipients
+      return qdb().requestRecipients
           .filter(x => x.providerId === currentUser.id && x.status === 'pending')
           .filter(x => {
-              const req = db.requests.find(r => r.id === x.requestId);
+              const req = qdb().requests.find(r => r.id === x.requestId);
               if(!req) return false;
               const s = req.effectiveStatus || req.status;
               // درخواست منقضی/لغو/تمام → پیشنهاد بی‌معنی
@@ -51,7 +51,7 @@
       const recipients = getMyReceivedOffers();
       if(!recipients.length) return keloEmptyStateHtml('چیزی اینجا نیست', 'پیشنهادهای ارسالی به درخواست شما، پس از ارسال اینجا نمایش داده می‌شود.');
       return recipients.map(o => {
-          const req = db.requests.find(r => r.id === o.requestId);
+          const req = qdb().requests.find(r => r.id === o.requestId);
           if(!req) return '';
           const actions = '<div class="offer-actions-row">'
               +'<button type="button" class="btn btn-brand" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button>'
@@ -135,9 +135,9 @@
   function openMobileNotifications(){
       const pending = (typeof getMyReceivedOffers === 'function')
           ? getMyReceivedOffers()
-          : db.requestRecipients.filter(function(o){ return String(o.providerId) === String(currentUser.id) && o.status === 'pending'; });
+          : qdb().requestRecipients.filter(function(o){ return String(o.providerId) === String(currentUser.id) && o.status === 'pending'; });
       const list = pending.length ? pending.map(function(o){
-          const req = db.requests.find(function(r){ return r.id === o.requestId; });
+          const req = qdb().requests.find(function(r){ return r.id === o.requestId; });
           const serviceTitle = req
               ? (typeof dealInvoiceServiceTitle === 'function' ? dealInvoiceServiceTitle({ service: req.service }, req) : serviceName(req.service))
               : serviceName(o.service);
@@ -164,16 +164,16 @@
 
   function hasActiveProposalForRequest(requestId, userA, userB){
       if (window.KeloDomain && window.KeloDomain.proposal && window.KeloDomain.proposal.hasActiveProposalBetween) {
-          return window.KeloDomain.proposal.hasActiveProposalBetween(db.requestRecipients, db.requests, requestId, userA, userB);
+          return window.KeloDomain.proposal.hasActiveProposalBetween(qdb().requestRecipients, qdb().requests, requestId, userA, userB);
       }
       if(!requestId || !userA || !userB) return false;
       const a = String(userA);
       const b = String(userB);
       if(a === b) return false;
-      return db.requestRecipients.some(function(rec){
+      return qdb().requestRecipients.some(function(rec){
           if(String(rec.requestId) !== String(requestId)) return false;
           if(rec.status !== 'pending' && rec.status !== 'accepted') return false;
-          const relatedRequest = db.requests.find(function(r){ return String(r.id) === String(requestId); });
+          const relatedRequest = qdb().requests.find(function(r){ return String(r.id) === String(requestId); });
           if(!relatedRequest) return false;
           const proposerId = rec.proposerId || relatedRequest.userId;
           const recipientId = rec.recipientId || rec.providerId;
@@ -188,7 +188,7 @@
 
   function hasProviderBookingConflict(providerId, machineId, start, end){
       if(!start || !end) return false;
-      return db.bookings.some(b=>{
+      return qdb().bookings.some(b=>{
           if(b.status!=='confirmed' && b.status!=='active') return false;
           if(b.providerId!==providerId) return false;
           if(machineId && b.machineId!==machineId) return false;
@@ -218,9 +218,9 @@
 
   function providerHasUnfinishedDeal(providerId){
       if (window.KeloDomain && window.KeloDomain.deal && window.KeloDomain.deal.providerHasUnfinishedDeal) {
-          return window.KeloDomain.deal.providerHasUnfinishedDeal(db.deals, providerId);
+          return window.KeloDomain.deal.providerHasUnfinishedDeal(qdb().deals, providerId);
       }
-      return db.deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
+      return qdb().deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
   }
 
   global.providerHasUnfinishedDeal = providerHasUnfinishedDeal;
@@ -308,13 +308,28 @@ async function acceptOffer(id){
       const _sendKey = String(requestId)+':'+String(providerId);
       if(window.__keloSending[_sendKey]) return;
       window.__keloSending[_sendKey] = true;
+      // Disable ALL send buttons for this sheet immediately to prevent double-tap
+      try {
+        document.querySelectorAll('.offer-item-btn.btn-brand').forEach(function(b){
+          if (!b.disabled) {
+            b.dataset.wasEnabled = '1';
+            b.disabled = true;
+          }
+        });
+      } catch (e) {}
       try{ return await sendRequestToProviderInner(providerId, requestId); }
       finally{
           delete window.__keloSending[_sendKey];
-          // If the send failed (or bailed out early) the sheet was not re-rendered:
-          // put the button back so the user can try again.
           const _b = document.querySelector('.request-offers-list-item[data-offer-id="'+String(providerId).replace(/"/g,'')+'"] .offer-item-btn');
           if(_b && _b.dataset && _b.dataset.origText && _b.disabled){ _b.disabled = false; _b.textContent = _b.dataset.origText; }
+          try {
+            document.querySelectorAll('.offer-item-btn.btn-brand').forEach(function(b){
+              if (b.dataset.wasEnabled === '1' && b.textContent !== 'در حال ارسال…') {
+                b.disabled = false;
+                delete b.dataset.wasEnabled;
+              }
+            });
+          } catch (e2) {}
       }
   }
 
@@ -327,7 +342,7 @@ async function acceptOffer(id){
 
       const request = (window.KeloService && window.KeloService.query)
         ? window.KeloService.query.getMyRequest(requestId)
-        : (db.requests.find(r => String(r.id) === String(requestId) && String(r.userId) === String(currentUser.id)));
+        : (qdb().requests.find(r => String(r.id) === String(requestId) && String(r.userId) === String(currentUser.id)));
       if (!request) { showToast('درخواست پیدا نشد','error'); return; }
 
       // candidate for API payload (server) — local adapter recomputes from helpers
@@ -338,12 +353,17 @@ async function acceptOffer(id){
       const api = window.KeloService && window.KeloService.proposals;
       if (!api) { showToast('سرویس پیشنهاد در دسترس نیست.','error'); return; }
 
+      function _asUuidClient(v) {
+          if (v == null || v === '') return null;
+          var s = String(v).trim();
+          return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s) ? s : null;
+      }
       const result = await api.send({
           userId: currentUser.id,
           requestId: requestId,
           providerId: providerId,
-          machineId: candidate.machineId || null,
-          listingId: candidate.listingId || null,
+          machineId: _asUuidClient(candidate.machineId),
+          listingId: _asUuidClient(candidate.listingId),
           unitPrice: candidate.unitPrice,
           priceUnit: candidate.priceUnit,
           location: candidate.location
