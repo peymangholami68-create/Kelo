@@ -40,7 +40,9 @@
                 </div>
             </div>
             <button type="button" class="nav-hamburger" id="navHamburger" aria-label="منو" onclick="toggleLandingNav()">☰</button>
-            <div class="nav-links" id="landingNavLinks">
+            
+        </div>
+        <div class="nav-links" id="landingNavLinks">
                 <div class="nav-dropdown">
                     <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">خدمات<span class="nav-chevron" aria-hidden="true"></span></button>
                     <div class="nav-dropdown-menu">
@@ -82,7 +84,6 @@
                     </div>
                 </div>
             </div>
-        </div>
     </nav>
     <section class="hero">
         <div class="container hero-grid">
@@ -280,17 +281,30 @@
     });
   }
 
-  window.toggleLandingNav = function () {
-    var links = document.getElementById('landingNavLinks');
+  function syncKeloNavHeight() {
     var nav = document.getElementById('landingNavbar');
     if (nav) {
       try { document.documentElement.style.setProperty('--kelo-nav-h', nav.offsetHeight + 'px'); } catch (e) {}
     }
+  }
+  window.toggleLandingNav = function () {
+    var links = document.getElementById('landingNavLinks');
+    syncKeloNavHeight();
     if (links) {
       var open = links.classList.toggle('open');
       try { document.body.style.overflow = open ? 'hidden' : ''; } catch (e) {}
+      if (open) {
+        links.style.top = getComputedStyle(document.documentElement).getPropertyValue('--kelo-nav-h').trim() || '64px';
+        links.style.height = 'calc(100dvh - ' + (links.style.top || '64px') + ')';
+      } else {
+        links.style.height = '';
+        links.style.top = '';
+      }
     }
   };
+  window.addEventListener('resize', syncKeloNavHeight);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', syncKeloNavHeight);
+  else syncKeloNavHeight();
 
   window.toggleNavDropdown = function (btn, ev) {
     if (ev) {
