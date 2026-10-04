@@ -53,10 +53,36 @@
       return recipients.map(o => {
           const req = qdb().requests.find(r => r.id === o.requestId);
           if(!req) return '';
-          const actions = '<div class="offer-actions-row">'
-              +'<button type="button" class="btn btn-brand" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button>'
-              +'<button type="button" class="btn btn-reject" onclick="rejectOffer(\''+o.id+'\')">رد کار</button>'
-              +'</div>';
+          let historyChip = '';
+          if (o.status === 'rejected') {
+              historyChip = '<span class="kelo-history-chip">سابقه رد پیشنهاد</span>';
+          } else {
+              var otherId = String(o.proposerId || o.userId || '');
+              var cancelled = (qdb().deals || []).some(function(d){
+                  return d.status === 'cancelled'
+                    && (String(d.requestId) === String(o.requestId) || String(d.requestId) === String(req.id))
+                    && (String(d.providerId) === String(currentUser.id) || String(d.userId) === String(currentUser.id)
+                        || String(d.providerId) === otherId || String(d.userId) === otherId);
+              });
+              if (cancelled || o.status === 'closed') {
+                  // closed after agreement cancel often
+                  var hasCancel = (qdb().deals || []).some(function(d){
+                      return d.status === 'cancelled' && String(d.requestId) === String(o.requestId);
+                  });
+                  if (hasCancel) historyChip = '<span class="kelo-history-chip">سابقه لغو توافق</span>';
+              }
+          }
+          var actions = '';
+          if (o.status === 'pending') {
+              actions = '<div class="offer-actions-row">'
+                  +'<button type="button" class="btn btn-brand" onclick="acceptOffer(\''+o.id+'\')">پذیرش کار</button>'
+                  +'<button type="button" class="btn btn-reject" onclick="rejectOffer(\''+o.id+'\')">رد کار</button>'
+                  +'</div>';
+          }
+          // Prefer custom card head with chip when history exists
+          if (historyChip && typeof renderKeloRequestCard === 'function') {
+              return renderKeloRequestCard(req, { actions: actions, offerId: o.id, historyChip: historyChip });
+          }
           return renderKeloRequestCard(req, { actions: actions, offerId: o.id });
       }).join('');
   }
@@ -115,7 +141,7 @@
 
   global.renderMobileProposals = renderMobileProposals;
 
-  function openNotificationOffer(recipientId){
+    function openNotificationOffer(recipientId){
       if(!currentUser || !recipientId) return;
       closeMobileAccountSheet();
       setMobileOrdersSubTab('offers');
@@ -132,23 +158,150 @@
 
   global.openNotificationOffer = openNotificationOffer;
 
-  function openMobileNotifications(){
+  function openNotificationDeepLink(kind, id, notifId){
+      if(!currentUser) return;
+      kind = String(kind || '');
+      id = String(id || '');
+      notifId = notifId ? String(notifId) : '';
+
+      // Mark ONLY this notification as read
+      (async function(){
+          try {
+              if (notifId && window.KeloBackend && window.KeloBackend.isServerMode && window.KeloBackend.isServerMode()
+                  && typeof window.KeloBackend.markNotificationsRead === 'function') {
+                  var result = await window.KeloBackend.markNotificationsRead([notifId]);
+                  if (result && (result.data || result.ok) && typeof applyServerSnapshot === 'function') {
+                      applyServerSnapshot(result.data || result);
+                  }
+              } else if (notifId && typeof db !== 'undefined' && Array.isArray(db.notifications)) {
+                  db.notifications.forEach(function(n){
+                      if (String(n.id) === notifId) n.readAt = new Date().toISOString();
+                  });
+              }
+          } catch (e) {}
+          if (typeof updateMobileHeader === 'function') {
+              try { updateMobileHeader(document.getElementById('mobileAppTitle') && document.getElementById('mobileAppTitle').textContent); } catch (e2) {}
+          }
+      })();
+
+      closeMobileAccountSheet();
+
+      if (kind === 'proposal_rejected' || kind === 'request') {
+          setMobileOrdersSubTab('requests');
+          setMobileTab('proposals');
+          setTimeout(function(){
+              if (id && typeof openRequestOffersMap === 'function') {
+                  try { openRequestOffersMap(id); } catch (e) {}
+              }
+          }, 280);
+          return;
+      }
+
+      if (kind === 'deal_cancelled' || kind === 'deal_paid' || kind === 'deal') {
+          setMobileOrdersSubTab('deals');
+          setMobileTab('proposals');
+          setTimeout(function(){
+              var card = document.querySelector('[data-deal-id="' + id + '"]');
+              if (card) {
+                  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  card.classList.add('kelo-card-highlight');
+                  setTimeout(function(){ card.classList.remove('kelo-card-highlight'); }, 1800);
+              }
+          }, 280);
+          return;
+      }
+
+      // Invoice: open profile → فاکتور list and highlight the CARD (not detail sheet)
+      if (kind === 'deal_completed' || kind === 'deal_awaiting_payment' || kind === 'deal_invoice' || kind === 'invoice') {
+          setTimeout(function(){
+              try {
+                  if (typeof openMobileAccountSheet === 'function') openMobileAccountSheet();
+                  else {
+                      var bd = document.getElementById('mobileAccountBackdrop');
+                      if (bd) {
+                          bd.classList.add('open');
+                          bd.setAttribute('aria-hidden', 'false');
+                          document.body.style.overflow = 'hidden';
+                      }
+                  }
+                  if (typeof renderMobileAccountSection === 'function') renderMobileAccountSection('invoice');
+                  setTimeout(function(){
+                      if (!id) return;
+                      var card = document.querySelector(
+                          '#mobileAccountSheet .invoice-deal-card[data-deal-id="' + id + '"], ' +
+                          '#mobileAccountSheet [data-deal-id="' + id + '"]'
+                      );
+                      if (card) {
+                          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          card.classList.add('kelo-card-highlight');
+                          setTimeout(function(){ card.classList.remove('kelo-card-highlight'); }, 2000);
+                      }
+                  }, 150);
+              } catch (e) {
+                  setMobileOrdersSubTab('deals');
+                  setMobileTab('proposals');
+              }
+          }, 200);
+          return;
+      }
+  }
+
+  global.openNotificationDeepLink = openNotificationDeepLink;
+
+  async function openMobileNotifications(){
+      try {
+          if (typeof refreshServerSnapshot === 'function') {
+              await refreshServerSnapshot(false);
+          }
+      } catch (e) {}
+
+      var allNotifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || (typeof db !== 'undefined' && db.notifications) || [];
+      var serverNotifs = allNotifs.filter(function(n){ return !n.readAt && !n.read_at; })
+          .slice()
+          .sort(function(a,b){ return new Date(b.createdAt || 0) - new Date(a.createdAt || 0); });
+
       const pending = (typeof getMyReceivedOffers === 'function')
           ? getMyReceivedOffers()
           : qdb().requestRecipients.filter(function(o){ return String(o.providerId) === String(currentUser.id) && o.status === 'pending'; });
-      const list = pending.length ? pending.map(function(o){
+
+      var cards = [];
+      serverNotifs.forEach(function(n){
+          var data = n.data || {};
+          var kind = n.type || data.kind || '';
+          var targetId = '';
+          if (kind === 'proposal_rejected') targetId = data.requestId || '';
+          else if (kind === 'deal_cancelled' || kind === 'deal_paid' || kind === 'deal_completed' || kind === 'deal_awaiting_payment' || kind === 'deal_invoice') {
+              targetId = data.dealId || '';
+          } else {
+              targetId = data.dealId || data.requestId || data.recipientId || '';
+          }
+          var safeKind = String(kind).replace(/'/g, '');
+          var safeId = String(targetId).replace(/'/g, '');
+          var safeNotifId = String(n.id || '').replace(/'/g, '');
+          var onclick = "openNotificationDeepLink('" + safeKind + "','" + safeId + "','" + safeNotifId + "')";
+          cards.push(
+              '<div class="mobile-activity-card notif-offer-card" role="button" tabindex="0" onclick="' + onclick + '">'
+              + '<div class="activity-row"><div class="mobile-activity-main">'
+              + '<strong>' + escapeHtml(n.title || 'اعلان') + '</strong>'
+              + '<span class="activity-meta">' + escapeHtml(n.body || '') + '</span>'
+              + '</div></div></div>'
+          );
+      });
+      pending.forEach(function(o){
           const req = qdb().requests.find(function(r){ return r.id === o.requestId; });
           const serviceTitle = req
               ? (typeof dealInvoiceServiceTitle === 'function' ? dealInvoiceServiceTitle({ service: req.service }, req) : serviceName(req.service))
               : serviceName(o.service);
-          return '<div class="mobile-activity-card notif-offer-card" role="button" tabindex="0" onclick="openNotificationOffer(\'' + o.id + '\')">'
-              + '<div class="activity-row">'
-              + '<div class="mobile-activity-main">'
+          cards.push(
+              '<div class="mobile-activity-card notif-offer-card" role="button" tabindex="0" onclick="openNotificationOffer(\'' + o.id + '\')">'
+              + '<div class="activity-row"><div class="mobile-activity-main">'
               + '<strong>پیشنهاد جدید</strong>'
               + '<span class="activity-meta">برای «' + escapeHtml(serviceTitle) + '» شما یک پیشنهاد دریافت کرده‌اید.</span>'
-              + '</div></div></div>';
-      }).join('') : '<div class="mobile-empty-state">اعلان جدیدی ندارید.</div>';
-  const backdrop=document.getElementById('mobileAccountBackdrop');
+              + '</div></div></div>'
+          );
+      });
+      const list = cards.length ? cards.join('') : '<div class="mobile-empty-state">اعلان جدیدی ندارید.</div>';
+      const backdrop=document.getElementById('mobileAccountBackdrop');
       const sheet=document.getElementById('mobileAccountSheet');
       if(!backdrop||!sheet)return;
       if(!backdrop._keloBackdropBound){
@@ -158,11 +311,12 @@
       backdrop.classList.add('open');backdrop.setAttribute('aria-hidden','false');document.body.style.overflow='hidden';
       sheet.innerHTML='<div class="mobile-account-head inner"><button type="button" class="mobile-account-back" onclick="closeMobileAccountSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><h2 class="mobile-account-title">اعلان‌ها</h2><span></span></div><div class="mobile-account-body">'+list+'</div>';
       attachSheetDragOnce(sheet);
+      // Do NOT mark all as read here — only the tapped item is marked in openNotificationDeepLink
   }
 
   global.openMobileNotifications = openMobileNotifications;
 
-  function hasActiveProposalForRequest(requestId, userA, userB){
+function hasActiveProposalForRequest(requestId, userA, userB){
       if (window.KeloDomain && window.KeloDomain.proposal && window.KeloDomain.proposal.hasActiveProposalBetween) {
           return window.KeloDomain.proposal.hasActiveProposalBetween(qdb().requestRecipients, qdb().requests, requestId, userA, userB);
       }

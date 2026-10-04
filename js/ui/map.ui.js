@@ -252,11 +252,32 @@
           let pos = null;
           if(o.location){ const s = String(o.location).trim(); if(KELO_CITY_COORDS[s]){ pos = KELO_CITY_COORDS[s]; } else { const parts = s.split(/[:\s،,-]+/).map(x=>x.trim()).filter(Boolean); for(const p of parts){ if(KELO_CITY_COORDS[p]){ pos = KELO_CITY_COORDS[p]; break; } } } }
           if(!pos){ const ang = (idx / Math.max(offers.length, 1)) * Math.PI * 2; pos = [center[0] + Math.cos(ang) * 0.015, center[1] + Math.sin(ang) * 0.015]; }
-          const offerIcon = L.divIcon({ className: 'kelo-offer-marker', html: '<div style="background:#5B9BB5;border:2.5px solid #fff;border-radius:50%;width:36px;height:36px;display:grid;place-items:center;font-weight:900;font-size:15px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.3);">' + toPersianDigits(idx + 1) + '</div>', iconSize: [36, 36], iconAnchor: [18, 18] });
-          const marker = L.marker(pos, { icon: offerIcon }).addTo(map);
-          marker.bindPopup('<div class="map-card-popup"><strong>' + escapeHtml(o.provider || 'ارائه‌دهنده') + '</strong><small>' + escapeHtml(serviceName(o.service)) + '<br>' + (o.total ? formatMoney(o.total) : 'توافقی') + '</small></div>');
+          const marker = L.circleMarker(pos, {
+              radius: 7,
+              color: '#c4a035',
+              weight: 0,
+              fillColor: '#c4a035',
+              fillOpacity: 1,
+              className: 'kelo-offer-dot'
+          }).addTo(map);
+          const popupLine = o._keloPopupLine || escapeHtml(serviceName(o.service || ''));
+          const popupAction = o._keloActionHtml || '';
+          marker.bindPopup(
+              '<div class="map-card-popup kelo-map-offer-popup">'
+              + '<div class="kelo-map-popup-line">' + popupLine + '</div>'
+              + '<div class="kelo-map-popup-actions">' + popupAction + '</div>'
+              + '</div>',
+              { maxWidth: 260, minWidth: 168, className: 'kelo-offer-popup', closeButton: false, autoPanPadding: [16, 16] }
+          );
           const markerKey = String(o.providerId);
-          marker.on('click', () => { const item = document.querySelector('.request-offers-list-item[data-offer-id="' + markerKey + '"]'); if(item){ item.scrollIntoView({behavior: 'smooth', block: 'center'}); document.querySelectorAll('.request-offers-list-item').forEach(x => x.classList.remove('active')); item.classList.add('active'); } });
+          marker.on('click', function() {
+              const item = document.querySelector('.request-offers-list-item[data-offer-id="' + markerKey + '"]');
+              if(item){
+                  item.scrollIntoView({behavior: 'smooth', block: 'center'});
+                  document.querySelectorAll('.request-offers-list-item').forEach(function(x){ x.classList.remove('active'); });
+                  item.classList.add('active');
+              }
+          });
           window._keloOffersMarkers[markerKey] = marker;
           points.push(pos);
       });
@@ -312,6 +333,18 @@
               }
           }
       }
+      // Dedupe by providerId (listing + provide ad can both appear)
+      (function(){
+          var seen = {};
+          var uniq = [];
+          (candidates || []).forEach(function(c){
+              var k = String(c.providerId || c.userId || '');
+              if (!k || seen[k]) return;
+              seen[k] = true;
+              uniq.push(c);
+          });
+          candidates = uniq;
+      })();
       const _myId = String(currentUser.id);
       // For a provider's own 'provide' ad, proposals are stored against the
       // farmer's 'need' request (not the ad), so match those by counterparty too.
@@ -342,15 +375,43 @@
       });
       const providersHtml = candidates.length ? candidates.map(o=>{
           const rec=recipientByProvider[o.providerId];
+          const _pid = String(o.providerId);
+          const cancelledDeal = (qdb().deals || []).find(function(d){
+              return String(d.requestId) === String(req.id)
+                && d.status === 'cancelled'
+                && (String(d.providerId) === _pid || String(d.userId) === _pid);
+          });
+          let historyChip = '';
+          if (rec && rec.status === 'rejected') {
+              historyChip = '<span class="kelo-history-chip">سابقه رد پیشنهاد</span>';
+          } else if (cancelledDeal || (rec && rec.status === 'closed' && cancelledDeal)) {
+              historyChip = '<span class="kelo-history-chip">سابقه لغو توافق</span>';
+          } else if (cancelledDeal) {
+              historyChip = '<span class="kelo-history-chip">سابقه لغو توافق</span>';
+          }
+          // Also show cancel chip if closed after deal cancel even without matching deal lookup edge cases
+          if (!historyChip && rec && rec.status === 'closed') {
+              const anyCancel = (qdb().deals || []).some(function(d){
+                  return String(d.requestId) === String(req.id) && d.status === 'cancelled'
+                    && (String(d.providerId) === _pid || String(d.userId) === _pid || String(d.requesterId) === _pid);
+              });
+              if (anyCancel) historyChip = '<span class="kelo-history-chip">سابقه لغو توافق</span>';
+          }
+
           let action='';
           if(rec && rec.status==='pending'){
-              action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">\u0644\u063a\u0648 \u0627\u0631\u0633\u0627\u0644</button>';
-          }else if(rec && rec.status==='rejected'){
-              action='<button type="button" class="btn btn-brand offer-item-btn" style="touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u0645\u062c\u062f\u062f</button>';
+              const _rp = String(rec.proposerId || rec.proposer_id || '');
+              if(_rp !== _myId){
+                  action='<button type="button" class="btn offer-item-btn btn-reject" style="width:100%" onclick="event.stopPropagation();rejectIncomingProposal(\''+rec.id+'\',\''+req.id+'\')">رد درخواست</button>';
+              } else {
+                  action='<button type="button" class="btn offer-item-btn btn-reject" style="width:100%" onclick="event.stopPropagation();cancelRecipient(\''+rec.id+'\',\''+req.id+'\')">لغو ارسال</button>';
+              }
+          }else if(rec && (rec.status==='rejected' || (rec.status==='closed' && historyChip.indexOf('لغو')>=0))){
+              action='<button type="button" class="btn btn-brand offer-item-btn" style="width:100%;touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">ارسال مجدد</button>';
           }else if(req.status==='accepted' || req.status==='agreed' || req.status==='in_progress' || req.status==='completed'){
-              action='<button class="btn offer-item-btn offer-item-btn-closed" disabled>\u062a\u0648\u0627\u0641\u0642 \u0634\u062f\u0647</button>';
+              action='<button class="btn offer-item-btn offer-item-btn-closed" style="width:100%" disabled>توافق شده</button>';
           }else{
-              action='<button type="button" class="btn btn-brand offer-item-btn" style="touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">\u0627\u0631\u0633\u0627\u0644 \u06a9\u0627\u0631</button>';
+              action='<button type="button" class="btn btn-brand offer-item-btn" style="width:100%;touch-action:manipulation" onclick="event.preventDefault();event.stopPropagation();sendRequestToProvider(\''+o.providerId+'\',\''+req.id+'\')">ارسال کار</button>';
           }
           const service = o.service || req.service;
           let _subOpt = '';
@@ -371,25 +432,31 @@
                   _locDisplay = nearestCityFromCoords(o.data.serviceLocation.lat, o.data.serviceLocation.lng) || '';
               }
               _infoHtml = '<div style="display:flex;align-items:center;gap:14px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0;flex-wrap:wrap">'
-                  + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('area') + '</span>' + (_area ? (toPersianDigits(_area) + ' \u0647\u06a9\u062a\u0627\u0631') : '\u2014') + '</span>'
-                  + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(_locDisplay || '\u2014') + '</span>'
+                  + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('area') + '</span>' + (_area ? (toPersianDigits(_area) + ' هکتار') : '—') + '</span>'
+                  + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('location') + '</span>' + escapeHtml(_locDisplay || '—') + '</span>'
                   + '</div>';
           }else{
-              const _mt = (o.data && o.data.machineType) ? o.data.machineType : '';
+              const _mt = (o.data && o.data.machineType) ? String(o.data.machineType) : '';
+              const _mtShort = _mt.length > 10 ? (_mt.slice(0, 10) + '…') : _mt;
               _infoHtml = '<div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#1F1F1F;font-weight:700;padding:2px 0">'
-                  + '<span class="kelo-icon-inline">' + keloCardIcon('machine') + '</span>' + escapeHtml(_mt || '\u2014')
+                  + '<span class="kelo-icon-inline">' + keloCardIcon('machine') + '</span>' + escapeHtml(_mtShort || '—')
                   + '</div>';
           }
-                  if(rec && rec.status==='pending'){
-              const _rp = String(rec.proposerId || rec.proposer_id || '');
-              if(_rp !== _myId){
-                  action='<button type="button" class="btn offer-item-btn btn-reject" onclick="event.stopPropagation();rejectIncomingProposal(\''+rec.id+'\',\''+req.id+'\')">رد درخواست</button>';
-              }
-          }
-          const priceLine = o.unitPrice ? fmtNum(o.unitPrice) + (o.priceUnit ? ' '+o.priceUnit : '') : '\u062a\u0648\u0627\u0641\u0642\u06cc';
+          const priceLine = o.unitPrice ? fmtNum(o.unitPrice) + (o.priceUnit ? ' '+o.priceUnit : '') : 'توافقی';
           const _showPrice = !_isProvideReq;
+          // Store popup meta for map markers
+          o._keloActionHtml = action;
+          o._keloHistoryChip = historyChip;
+          o._keloServiceDisplay = _serviceDisplay;
+          o._keloPopupLine = _isProvideReq
+              ? (escapeHtml(_subOpt || serviceName(service)) + ' | ' + ((o.data && (o.data.area || o.data.amount)) ? (toPersianDigits(o.data.area || o.data.amount) + ' هکتار') : '—'))
+              : (escapeHtml(((o.data && o.data.machineType) ? String(o.data.machineType).slice(0,10) : '—')) + ' | ' + priceLine);
           return '<div class="request-offers-list-item" data-offer-id="'+escapeHtml(o.providerId)+'" onclick="focusOfferOnMap(\''+escapeHtml(o.providerId)+'\')">'
-              +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(_serviceDisplay)+_ratingHtml+'</strong></div>'
+              +'<div class="kelo-card-head" style="display:flex;align-items:center;gap:8px;width:100%">'
+              +  '<span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span>'
+              +  '<strong style="flex:1;min-width:0">'+escapeHtml(_serviceDisplay)+_ratingHtml+'</strong>'
+              +  historyChip
+              +'</div>'
               +'<div class="kelo-card-info-list">'+_infoHtml+'</div>'
               +(_showPrice ? '<div class="offer-card-price">'+priceLine+'</div>' : '')
               +'<div class="offer-actions-row single">'+action+'</div>'

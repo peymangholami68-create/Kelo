@@ -44,6 +44,9 @@
     async cancelRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id),'DELETE',{});},
     async payDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/pay','POST',{});},
     async cancelDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/cancel','POST',{});},
-    async completeDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/complete','POST',{});}
+    async completeDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/complete','POST',{});},
+    async markNotificationsRead(ids){return mutate('/notifications/read','POST',{ids:ids||null});},
+    async updateDealLocation(dealId,payload){return mutate('/deals/'+encodeURIComponent(dealId)+'/location','PUT',payload||{});},
+    async getDealLocation(dealId){await init(); const body=await request('/deals/'+encodeURIComponent(dealId)+'/location',{method:'GET'}); return body && body.location ? body.location : null;}
   };
 })();

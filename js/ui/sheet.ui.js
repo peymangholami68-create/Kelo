@@ -48,7 +48,17 @@
       const nav=document.getElementById('mobileBottomNav');
       if(nav){ nav.querySelectorAll('button[data-tab]').forEach(b=>{ b.classList.toggle('active', b.dataset.tab === window.__keloMobileTab); }); }
       const badge=document.getElementById('mobileNotificationBadge');
-      if(badge && currentUser){ const n=qRecipients().filter(o=>o.providerId===currentUser.id && o.status==='pending').length; badge.textContent=toPersianDigits(n); badge.classList.toggle('hidden',!n); }
+      if(badge && currentUser){
+          var pendingOffers = qRecipients().filter(function(o){ return String(o.providerId)===String(currentUser.id) && o.status==='pending'; }).length;
+          var notifs = [];
+          try {
+              notifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || (typeof db !== 'undefined' && db.notifications) || [];
+          } catch (e) { notifs = []; }
+          var unreadNotifs = notifs.filter(function(n){ return !n.readAt && !n.read_at; }).length;
+          var n = pendingOffers + unreadNotifs;
+          badge.textContent = toPersianDigits(n);
+          badge.classList.toggle('hidden', !n);
+      }
       const calBadge = document.getElementById('mobileCalendarBadge');
       if(calBadge && currentUser){
           try{

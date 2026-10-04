@@ -274,13 +274,13 @@
                   action = '';
               } else {
                   // Unpaid: always can pay; cancel only if work not completed yet
-                  const payBtn = '<button type="button" class="btn btn-brand" onclick="openPaymentOptions(\'' + d.id + '\')">پرداخت</button>';
+                  const payBtn = '<button type="button" class="btn btn-brand" onclick="event.stopPropagation();openPaymentOptions(\'' + d.id + '\')">پرداخت</button>';
                   if (isCompleted) {
                       action = '<div class="offer-actions-row single">' + payBtn + '</div>';
                   } else {
                       action = '<div class="offer-actions-row">'
                           + payBtn
-                          + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                          + '<button type="button" class="btn btn-reject" onclick="event.stopPropagation();cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
                           + '</div>';
                   }
               }
@@ -290,13 +290,13 @@
                   // Completed but unpaid — provider has no actions; chip shows در انتظار پرداخت
                   action = '';
               } else {
-                  const completeBtn = '<button type="button" class="btn btn-brand" onclick="completeDeal(\'' + d.id + '\')">اتمام کار</button>';
+                  const completeBtn = '<button type="button" class="btn btn-brand" onclick="event.stopPropagation();completeDeal(\'' + d.id + '\')">اتمام کار</button>';
                   if (isPaid) {
                       action = '<div class="offer-actions-row single">' + completeBtn + '</div>';
                   } else {
                       action = '<div class="offer-actions-row">'
                           + completeBtn
-                          + '<button type="button" class="btn btn-reject" onclick="cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
+                          + '<button type="button" class="btn btn-reject" onclick="event.stopPropagation();cancelDeal(\'' + d.id + '\')">انصراف از کار</button>'
                           + '</div>';
                   }
               }
@@ -306,10 +306,19 @@
               + '<span style="display:inline-flex;align-items:center;gap:5px"><span class="kelo-icon-inline">' + keloCardIcon('date') + '</span>' + escapeHtml(date) + '</span>'
               + '</div>';
           const priceLine = '<div class="offer-card-price">' + escapeHtml('قیمت کل: ' + price) + '</div>';
-          const problemLink = (d.status === 'cancelled')
+          const problemLink = (d.status === 'cancelled' || (isCompleted && isPaid))
               ? ''
               : '<div class="deal-problem-link-wrap"><span class="deal-problem-link" role="button" tabindex="0" onclick="event.stopPropagation();openDealProblemReport(\'' + d.id + '\')"><span class="deal-problem-icon" aria-hidden="true">!</span>گزارش مشکل</span></div>';
-          return '<div class="mobile-activity-card kelo-service-card" data-deal-id="'+escapeHtml(String(d.id))+'">'
+          var _locActive = (window.KeloDomain && window.KeloDomain.location && window.KeloDomain.location.isLocationSharingActive)
+              ? window.KeloDomain.location.isLocationSharingActive(d) : (d.status !== 'completed' && d.status !== 'cancelled');
+          var _locClick = _locActive
+              ? ' role="button" tabindex="0" onclick="openDealLocationMap(\''+escapeHtml(String(d.id))+'\')"'
+              : '';
+          var _inactive = (d.status === 'cancelled') || (isCompleted && isPaid);
+          var _cardStyle = _inactive
+              ? 'cursor:default;opacity:.65'
+              : (_locActive ? 'cursor:pointer' : 'cursor:default');
+          return '<div class="mobile-activity-card kelo-service-card" style="'+_cardStyle+'" data-deal-id="'+escapeHtml(String(d.id))+'"'+_locClick+'>'
               +'<div class="kelo-card-head"><span class="kelo-card-head-icon">'+serviceCardIconSvg(service)+'</span><strong>'+escapeHtml(serviceName(service))+'</strong>'
               +  '<span class="kelo-card-status '+_chip.cls+'">'+_chip.label+'</span></div>'
               +'<div class="kelo-card-info-list">'
@@ -629,6 +638,147 @@ async function cancelDeal(dealId){
    * Handlers remain on window for HTML onclick compatibility.
    */
   var _inited = false;
+
+  function closeDealLocationMap(){
+      try {
+          if (window.KeloLocationService) window.KeloLocationService.stopAll();
+      } catch (e) {}
+      if (window._keloDealLocMap) {
+          try { window._keloDealLocMap.remove(); } catch (e) {}
+          window._keloDealLocMap = null;
+      }
+      window._keloDealLocProviderMarker = null;
+      var sheet = document.getElementById('keloDealLocationSheet');
+      if (sheet) sheet.remove();
+      document.body.style.overflow = '';
+  }
+  global.closeDealLocationMap = closeDealLocationMap;
+
+  function openDealLocationMap(dealId){
+      if (!currentUser || !dealId) return;
+      var d = (qdb().deals || []).find(function(x){ return String(x.id) === String(dealId); });
+      if (!d) { showToast('توافق پیدا نشد', 'error'); return; }
+
+      var Loc = window.KeloDomain && window.KeloDomain.location;
+      var active = Loc && Loc.isLocationSharingActive ? Loc.isLocationSharingActive(d) : (d.status !== 'completed' && d.status !== 'cancelled');
+      if (!active) {
+          showToast('اشتراک موقعیت فقط در توافق فعال در دسترس است', 'error');
+          return;
+      }
+
+      closeDealLocationMap();
+
+      var dest = Loc && Loc.getFarmerDestination
+          ? Loc.getFarmerDestination(d, qdb().requests || [])
+          : null;
+      var isProvider = Loc && Loc.isProvider
+          ? Loc.isProvider(d, currentUser.id)
+          : String(d.providerId) === String(currentUser.id);
+
+      var navBtn = (isProvider && dest)
+          ? '<button type="button" class="btn btn-brand" id="keloDealNavBtn" style="width:100%;margin-top:8px">مسیریابی تا محل کشاورز</button>'
+          : '';
+      var hint = isProvider
+          ? 'موقعیت شما هر ۱۵ ثانیه به‌روز می‌شود تا وقتی این نقشه باز است.'
+          : 'موقعیت ماشین‌دار وقتی نقشه را باز نگه دارد به‌روز می‌شود.';
+
+      var sheet = document.createElement('div');
+      sheet.id = 'keloDealLocationSheet';
+      sheet.className = 'mobile-sheet-backdrop open';
+      sheet.innerHTML =
+          '<div class="mobile-sheet" style="height:88vh;max-height:88vh;display:flex;flex-direction:column">' +
+          '<button type="button" class="mobile-sheet-handle"></button>' +
+          '<div class="mobile-sheet-header">' +
+          '<button type="button" class="mobile-sheet-back-btn" onclick="closeDealLocationMap()" aria-label="بازگشت">' +
+          (typeof KELO_BACK_CHEVRON_SVG !== 'undefined' ? KELO_BACK_CHEVRON_SVG : '←') +
+          '</button>' +
+          '<h2 style="margin:0;font-size:16px;font-weight:800">موقعیت توافق</h2><span></span></div>' +
+          '<div id="keloDealLocMap" style="flex:1;min-height:220px;background:#dfe7cc"></div>' +
+          '<div style="padding:12px 16px 20px;border-top:1px solid rgba(0,0,0,.06)">' +
+          '<div id="keloDealLocStatus" style="font-size:12px;color:#666;margin-bottom:6px;line-height:1.5">' + hint + '</div>' +
+          navBtn +
+          '</div></div>';
+      document.body.appendChild(sheet);
+      document.body.style.overflow = 'hidden';
+      sheet.addEventListener('click', function(e){ if (e.target === sheet) closeDealLocationMap(); });
+
+      requestAnimationFrame(function(){
+          var el = document.getElementById('keloDealLocMap');
+          if (!el || typeof L === 'undefined' || typeof createKeloMap !== 'function') {
+              if (el) el.innerHTML = '<div style="padding:24px;text-align:center">نقشه در دسترس نیست</div>';
+              return;
+          }
+          var center = dest ? [dest.lat, dest.lng] : [36.5659, 53.0586];
+          var map = createKeloMap(el, { zoomControl: false, attributionControl: false }, center, dest ? 13 : 9);
+          window._keloDealLocMap = map;
+
+          if (dest) {
+              L.circleMarker([dest.lat, dest.lng], {
+                  radius: 9, color: '#fff', weight: 2, fillColor: '#78a83f', fillOpacity: 1
+              }).addTo(map).bindPopup('<div class="map-card-popup"><strong>محل کشاورز</strong></div>');
+          }
+
+          var providerMarker = null;
+          function upsertProviderMarker(lat, lng) {
+              if (typeof lat !== 'number' || typeof lng !== 'number') return;
+              if (providerMarker) {
+                  providerMarker.setLatLng([lat, lng]);
+              } else {
+                  providerMarker = L.circleMarker([lat, lng], {
+                      radius: 8, color: '#fff', weight: 2, fillColor: '#c4a035', fillOpacity: 1
+                  }).addTo(map).bindPopup('<div class="map-card-popup"><strong>ماشین‌دار</strong></div>');
+                  window._keloDealLocProviderMarker = providerMarker;
+              }
+              try {
+                  if (dest) {
+                      map.fitBounds(L.latLngBounds([[dest.lat, dest.lng], [lat, lng]]).pad(0.35));
+                  } else {
+                      map.setView([lat, lng], 14);
+                  }
+              } catch (e) {}
+          }
+
+          var statusEl = document.getElementById('keloDealLocStatus');
+          function setStatus(msg) {
+              if (statusEl) statusEl.textContent = msg;
+          }
+
+          if (window.KeloLocationService) {
+              if (isProvider) {
+                  window.KeloLocationService.startSharingLocation(dealId);
+                  if (navigator.geolocation) {
+                      navigator.geolocation.getCurrentPosition(function(pos){
+                          upsertProviderMarker(pos.coords.latitude, pos.coords.longitude);
+                      }, function(){}, { enableHighAccuracy: true, timeout: 15000 });
+                  }
+              }
+              window.KeloLocationService.startPollingCounterpartyLocation(dealId, function(loc){
+                  if (!loc) return;
+                  upsertProviderMarker(Number(loc.lat), Number(loc.lng));
+                  var age = loc.updatedAt ? Math.round((Date.now() - new Date(loc.updatedAt).getTime()) / 1000) : null;
+                  if (age != null && age >= 0) {
+                      setStatus('آخرین به‌روزرسانی: ' + (typeof toPersianDigits === 'function' ? toPersianDigits(age) : age) + ' ثانیه پیش');
+                  }
+              });
+          }
+
+          var nav = document.getElementById('keloDealNavBtn');
+          if (nav && dest) {
+              nav.addEventListener('click', function(){
+                  if (window.KeloNavigationService && window.KeloNavigationService.openNavigationTo) {
+                      window.KeloNavigationService.openNavigationTo(dest.lat, dest.lng, dest.label || 'محل کشاورز');
+                  } else if (typeof openNavigationTo === 'function') {
+                      openNavigationTo(dest.lat, dest.lng, dest.label || 'محل کشاورز');
+                  }
+              });
+          }
+
+          setTimeout(function(){ try { map.invalidateSize(true); } catch (e) {} }, 200);
+      });
+  }
+  global.openDealLocationMap = openDealLocationMap;
+
+
   global.KeloDealUI = {
     name: 'Deal',
     init: function () {

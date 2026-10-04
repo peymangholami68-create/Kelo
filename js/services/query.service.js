@@ -43,7 +43,8 @@
       requestRecipients: [],
       deals: [],
       reviews: [],
-      payments: []
+      payments: [],
+      notifications: []
     };
   }
 
@@ -60,7 +61,8 @@
       requestRecipients: db.requestRecipients || [],
       deals: db.deals || [],
       reviews: db.reviews || [],
-      payments: db.payments || []
+      payments: db.payments || [],
+      notifications: db.notifications || []
     };
   }
 

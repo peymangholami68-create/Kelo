@@ -26,19 +26,61 @@
 <body>
 
 <div id="landing">
-    <nav class="navbar">
+    <nav class="navbar" id="landingNavbar">
         <div class="container nav-inner">
-            <div class="logo">
+            <div class="logo" role="button" tabindex="0" onclick="showLandingHome()" style="cursor:pointer">
                 <div class="logo-brand-row">
                     <span class="logo-brand-text">Kelo</span>
                     <svg class="logo-pin-o" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <defs><linearGradient id="pinGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#C5B23E"/><stop offset="100%" stop-color="#9E8E24"/></linearGradient></defs>
+                      <defs><linearGradient id="pinGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#f0e6a8"/></linearGradient></defs>
                       <path d="M 50 6 C 28 6 12 22 12 44 C 12 67 38 87 47 93 C 49 94.5 51 94.5 53 93 C 62 87 88 67 88 44 C 88 22 72 6 50 6 Z" fill="url(#pinGrad)"/>
                       <circle cx="50" cy="42" r="26" fill="#fffdf6"/>
                     </svg>
                 </div>
             </div>
-            <div class="nav-actions"></div>
+            <button type="button" class="nav-hamburger" id="navHamburger" aria-label="منو" onclick="toggleLandingNav()">☰</button>
+            <div class="nav-links" id="landingNavLinks">
+                <div class="nav-dropdown">
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">خدمات</button>
+                    <div class="nav-dropdown-menu">
+                        <button type="button" onclick="showLandingPage('services')">همه خدمات</button>
+                        <button type="button" onclick="showLandingPage('services-plow')">شخم و دیسک</button>
+                        <button type="button" onclick="showLandingPage('services-plant')">کاشت</button>
+                        <button type="button" onclick="showLandingPage('services-spray')">سمپاشی</button>
+                        <button type="button" onclick="showLandingPage('services-harvest')">برداشت</button>
+                    </div>
+                </div>
+                <div class="nav-dropdown">
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">مجله کشاورزی</button>
+                    <div class="nav-dropdown-menu">
+                        <button type="button" onclick="showLandingPage('mag-guide')">راهنمای انتخاب ماشین‌آلات</button>
+                        <button type="button" onclick="showLandingPage('mag-types')">انواع ماشین‌آلات</button>
+                        <button type="button" onclick="showLandingPage('mag-mazandaran')">کشاورزی در مازندران</button>
+                        <button type="button" onclick="showLandingPage('mag-history')">تاریخچه مکانیزاسیون</button>
+                    </div>
+                </div>
+                <div class="nav-dropdown">
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">کشاورزان</button>
+                    <div class="nav-dropdown-menu">
+                        <button type="button" onclick="showLandingPage('farmers-how')">چطور کار می‌کند؟</button>
+                        <button type="button" onclick="showLandingPage('farmers-why')">چرا کلو؟</button>
+                    </div>
+                </div>
+                <div class="nav-dropdown">
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">ماشین‌داران</button>
+                    <div class="nav-dropdown-menu">
+                        <button type="button" onclick="showLandingPage('providers-how')">چطور کار می‌کند؟</button>
+                        <button type="button" onclick="showLandingPage('providers-why')">چرا کلو؟</button>
+                    </div>
+                </div>
+                <div class="nav-dropdown">
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">درباره کلو</button>
+                    <div class="nav-dropdown-menu">
+                        <button type="button" onclick="showLandingPage('about')">درباره ما</button>
+                        <button type="button" onclick="showLandingPage('contact')">تماس با ما</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </nav>
     <section class="hero">
@@ -88,7 +130,39 @@
             </div>
         </div>
     </section>
-    <footer>
+
+    <div id="landingPages">
+      <section class="landing-page" data-page="services">
+        <div class="container">
+          <button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button>
+          <h1>خدمات کشاورزی</h1>
+          <p>Kelo شما را مستقیم به ماشین‌آلات و اپراتورهای کشاورزی منطقه وصل می‌کند — بدون واسطه و با قیمت شفاف. کافی‌ست نوع خدمت، زمان و مساحت را مشخص کنید تا پیشنهادهای واقعی از ارائه‌دهندگان نزدیک شما را ببینید.</p>
+          <div class="landing-svc-card"><h3>شخم و دیسک</h3><p>آماده‌سازی زمین برای کاشت با تراکتور و ادوات مرتبط.</p></div>
+          <div class="landing-svc-card"><h3>کاشت</h3><p>نشاکاری مکانیزه و عملیات کاشت بذر یا نشاء.</p></div>
+          <div class="landing-svc-card"><h3>سمپاشی</h3><p>مبارزه با آفات و بیماری‌ها؛ سم‌پاشی زمینی بر اساس نیاز مزرعه.</p></div>
+          <div class="landing-svc-card"><h3>برداشت</h3><p>برداشت محصول با ماشین‌آلات مناسب (کمباین، دروگر و …).</p></div>
+          <div class="landing-cta-row">
+            <button class="btn btn-primary" onclick="openLogin()">ثبت درخواست</button>
+          </div>
+        </div>
+      </section>
+      <section class="landing-page" data-page="services-plow"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>شخم و دیسک</h1><p>آماده‌سازی زمین پیش از کاشت با تراکتور، گاوآهن و دیسک؛ انتخاب ادوات به بافت خاک و بقایای گیاهی بستگی دارد.</p><div class="landing-cta-row"><button class="btn btn-primary" onclick="openLogin()">ثبت درخواست</button></div></div></section>
+      <section class="landing-page" data-page="services-plant"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>کاشت</h1><p>نشاکاری مکانیزه برنج و بذرپاشی؛ کاهش زمان و نیروی کار نسبت به روش دستی.</p><div class="landing-cta-row"><button class="btn btn-primary" onclick="openLogin()">ثبت درخواست</button></div></div></section>
+      <section class="landing-page" data-page="services-spray"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>سمپاشی</h1><p>سم‌پاشی و کوددهی مایع؛ متناسب با مقیاس مزرعه به‌صورت تراکتوری یا پشتی موتوری.</p><div class="landing-cta-row"><button class="btn btn-primary" onclick="openLogin()">ثبت درخواست</button></div></div></section>
+      <section class="landing-page" data-page="services-harvest"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>برداشت</h1><p>برداشت غلات با کمباین و سایر عملیات برداشت متناسب با نوع محصول و اندازه قطعه.</p><div class="landing-cta-row"><button class="btn btn-primary" onclick="openLogin()">ثبت درخواست</button></div></div></section>
+      <section class="landing-page" data-page="mag-guide"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>راهنمای انتخاب ماشین‌آلات</h1><p>انتخاب درست ماشین‌آلات روی هزینه و زمان کار اثر می‌گذارد. این راهنما بر اساس نوع عملیات کمک می‌کند بفهمید در Kelo دنبال چه خدمتی باشید.</p><ul><li>آماده‌سازی زمین: تراکتور با گاوآهن یا دیسک</li><li>شالیزار برنج: نشاکار مکانیزه</li><li>برداشت غلات: کمباین خودرو یا تراکتورکش</li><li>سم‌پاشی: تراکتوری برای مزارع بزرگ، پشتی برای قطعات کوچک</li></ul><p><strong>نکته:</strong> قبل از ثبت درخواست، مساحت دقیق و نوع محصول را مشخص کنید.</p></div></section>
+      <section class="landing-page" data-page="mag-types"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>انواع ماشین‌آلات کشاورزی</h1><h2>تراکتور</h2><p>نیروگاه متحرک مزرعه؛ ادوات مختلف را می‌کشد یا به کار می‌اندازد.</p><h2>ادوات آماده‌سازی خاک</h2><p>گاوآهن برای شخم اولیه؛ دیسک برای خرد کردن کلوخه و یکنواخت‌کردن سطح.</p><h2>کمباین</h2><p>درو، خرمن‌کوبی و جداسازی دانه در یک مرحله.</p><h2>نشاکار و سم‌پاش</h2><p>نشاکار برای برنج؛ سم‌پاش برای کنترل آفت و کوددهی مایع.</p></div></section>
+      <section class="landing-page" data-page="mag-mazandaran"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>کشاورزی در مازندران</h1><p>مازندران از قطب‌های کشاورزی ایران است؛ برنج و مرکبات دو محصول اصلی استان‌اند.</p><h2>فصل‌بندی تقریبی</h2><ul><li>نشاکاری برنج: اردیبهشت تا اوایل تابستان</li><li>برداشت برنج: شهریور تا مهر</li><li>برداشت مرکبات: پاییز و زمستان</li></ul><p>بازه‌ها تقریبی‌اند و با آب‌وهوا و منطقه جابه‌جا می‌شوند.</p></div></section>
+      <section class="landing-page" data-page="mag-history"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>تاریخچه مکانیزاسیون در ایران</h1><p>کشاورزی در فلات ایران سابقه‌ای کهن دارد. ورود جدی تراکتور و کمباین از دهه ۱۳۳۰ با بنگاه توسعه ماشین‌های کشاورزی شدت گرفت.</p><p>Kelo در ادامه همین مسیر، با اتصال کشاورز به ماشین‌آلات، سهمی در دسترسی آسان‌تر به مکانیزاسیون دارد.</p></div></section>
+      <section class="landing-page" data-page="farmers-how"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>کشاورزان — چطور کار می‌کند؟</h1><ol><li>ثبت درخواست — نوع خدمت، زمان و مساحت</li><li>دریافت پیشنهاد از ارائه‌دهندگان نزدیک</li><li>انتخاب و توافق</li><li>انجام کار و پرداخت</li></ol></div></section>
+      <section class="landing-page" data-page="farmers-why"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>کشاورزان — چرا کلو؟</h1><ul><li>قیمت شفاف پیش از توافق</li><li>مقایسه چند پیشنهاد</li><li>ارتباط مستقیم بدون واسطه</li></ul></div></section>
+      <section class="landing-page" data-page="providers-how"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>ماشین‌داران — چطور کار می‌کند؟</h1><ol><li>ثبت‌نام و معرفی ماشین‌آلات</li><li>مشاهده درخواست‌های نزدیک</li><li>پیشنهاد یا پذیرش</li><li>انجام کار و دریافت پرداخت</li></ol></div></section>
+      <section class="landing-page" data-page="providers-why"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>ماشین‌داران — چرا کلو؟</h1><ul><li>دسترسی به مشتری بیشتر</li><li>کمیسیون شفاف</li><li>توافق مستقیم با کشاورز</li></ul></div></section>
+      <section class="landing-page" data-page="about"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>درباره ما</h1><p>Kelo برای حل فاصله بین کشاورزانی که به ماشین‌آلات نیاز دارند و ماشین‌دارانی که ظرفیت خالی دارند ساخته شده — بدون واسطه و با قیمت شفاف.</p><p>فعالیت فعلی در استان‌های مازندران و گیلان متمرکز است.</p></div></section>
+      <section class="landing-page" data-page="contact"><div class="container"><button type="button" class="landing-back" onclick="showLandingHome()">← بازگشت</button><h1>تماس با ما</h1><p>شماره تماس / پشتیبانی:</p><p><a href="tel:+989117802991" dir="ltr" style="font-size:18px;font-weight:800;color:#9E8E24;unicode-bidi:isolate;letter-spacing:0.02em">۰۹۱۱&nbsp;۷۸۰&nbsp;۲۹۹۱</a></p><p>منطقه فعالیت: مازندران و گیلان</p></div></section>
+    </div>
+
+    <footer class="landing-footer">
         <div class="footer-logo">KELO | کِلو</div>
         <div class="footer-sub">خدمات مکانیزه کشاورزی</div>
     </footer>
@@ -170,6 +244,7 @@
 <script src="./js/domain/proposal.domain.js"></script>
 <script src="./js/domain/deal.domain.js"></script>
 <script src="./js/domain/eligibility.domain.js"></script>
+<script src="./js/domain/location.domain.js"></script>
 <script src="./js/adapters/local.adapter.js"></script>
 <script src="./js/adapters/api.adapter.js"></script>
 <script src="./js/services/auth.service.js"></script>
@@ -179,6 +254,8 @@
 <script src="./js/services/deal.service.js"></script>
 <script src="./js/services/payment.service.js"></script>
 <script src="./js/services/notification.service.js"></script>
+<script src="./js/services/location.service.js"></script>
+<script src="./js/services/navigation.service.js"></script>
 <script src="./js/services/query.service.js"></script>
 <script src="./js/services/kelo-service.js"></script>
 <script src="./js/app.js"></script>
@@ -193,5 +270,78 @@
 <script src="./js/ui/sheet.ui.js"></script>
 <!-- Phase 18 — single app entry (must be last) -->
 <script src="./js/app/kelo-app.js"></script>
+
+<script>
+(function () {
+  function closeAllDropdowns() {
+    document.querySelectorAll('#landingNavbar .nav-dropdown.open').forEach(function (el) {
+      el.classList.remove('open');
+    });
+  }
+
+  window.toggleLandingNav = function () {
+    var links = document.getElementById('landingNavLinks');
+    if (links) links.classList.toggle('open');
+  };
+
+  window.toggleNavDropdown = function (btn, ev) {
+    if (ev) {
+      try { ev.preventDefault(); ev.stopPropagation(); } catch (e) {}
+    }
+    var dd = btn && btn.closest ? btn.closest('.nav-dropdown') : null;
+    if (!dd) return;
+    var wasOpen = dd.classList.contains('open');
+    closeAllDropdowns();
+    if (!wasOpen) dd.classList.add('open');
+  };
+
+  window.showLandingHome = function () {
+    document.querySelectorAll('#landing > section').forEach(function (s) {
+      if (!s.classList.contains('landing-page')) {
+        s.style.display = '';
+        s.style.removeProperty('display');
+      }
+    });
+    var pages = document.getElementById('landingPages');
+    if (pages) {
+      pages.classList.remove('is-open');
+      pages.querySelectorAll('.landing-page').forEach(function (p) {
+        p.classList.remove('active');
+        p.style.display = 'none';
+      });
+    }
+    closeAllDropdowns();
+    var links = document.getElementById('landingNavLinks');
+    if (links) links.classList.remove('open');
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); }
+  };
+
+  window.showLandingPage = function (id) {
+    document.querySelectorAll('#landing > section').forEach(function (s) {
+      if (!s.classList.contains('landing-page')) s.style.display = 'none';
+    });
+    var pages = document.getElementById('landingPages');
+    if (pages) {
+      pages.classList.add('is-open');
+      pages.querySelectorAll('.landing-page').forEach(function (p) {
+        var on = p.getAttribute('data-page') === id;
+        p.classList.toggle('active', on);
+        p.style.display = on ? 'block' : 'none';
+      });
+    }
+    closeAllDropdowns();
+    var links = document.getElementById('landingNavLinks');
+    if (links) links.classList.remove('open');
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); }
+  };
+
+
+
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || !e.target.closest('#landingNavbar')) closeAllDropdowns();
+  });
+})();
+</script>
+
 </body>
 </html>

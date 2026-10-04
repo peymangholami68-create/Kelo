@@ -199,8 +199,13 @@
       const extraAttrs = options.offerId
           ? (' data-offer-id="' + escapeHtml(String(options.offerId)) + '"')
           : (options.dealId ? (' data-deal-id="' + escapeHtml(String(options.dealId)) + '"') : '');
+      const historyChip = options.historyChip || '';
       return '<div class="mobile-activity-card kelo-service-card"' + extraAttrs + '>'
-          + '<div class="kelo-card-head"><span class="kelo-card-head-icon">' + serviceCardIconSvg(service) + '</span><div style="flex:1;min-width:0"><strong style="display:block">' + escapeHtml(serviceName(service)) + '</strong>' + subTitleHtml + '</div></div>'
+          + '<div class="kelo-card-head" style="display:flex;align-items:center;gap:8px;width:100%">'
+          +   '<span class="kelo-card-head-icon">' + serviceCardIconSvg(service) + '</span>'
+          +   '<div style="flex:1;min-width:0"><strong style="display:block">' + escapeHtml(serviceName(service)) + '</strong>' + subTitleHtml + '</div>'
+          +   historyChip
+          + '</div>'
           + '<div class="kelo-card-info-list">' + locDateLine + '</div>'
           + priceBar
           + (options.actions || '')

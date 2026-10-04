@@ -13,10 +13,7 @@
 
   function buildProfileFormFields(){
       const p=currentUser.profile||{};
-      const provinceCities={
-          "مازندران":["آمل","بابل","بابلسر","بهشهر","تنکابن","جویبار","چالوس","رامسر","ساری","سوادکوه","سوادکوه شمالی","سیمرغ","عباس‌آباد","فریدون‌کنار","قائم‌شهر","کلاردشت","گلوگاه","محمودآباد","میاندورود","نکا","نور","نوشهر"],
-          "گیلان":["آستانه اشرفیه","آستارا","املش","بندر انزلی","رشت","رضوانشهر","رودبار","رودسر","سیاهکل","شفت","صومعه‌سرا","طوالش","فومن","لاهیجان","لنگرود","ماسال"]
-      };
+      const provinceCities = (typeof KELO_GEOGRAPHY !== "undefined" && KELO_GEOGRAPHY) ? KELO_GEOGRAPHY : {"مازندران":[],"گیلان":[]};
       const profileProvince=p.province||"مازندران";
       const cityOptions=(provinceCities[profileProvince]||[]).map(city=>'<option value="'+city+'" '+(p.city===city?'selected':'')+'>'+city+'</option>').join('');
       return '<div class="form-group"><label>نام کامل <span style="color:red">*</span></label><input id="pName" class="input" required value="'+escapeHtml(currentUser.name||"")+'" placeholder="نام و نام خانوادگی"></div><div class="form-group"><label>استان <span style="color:red">*</span></label><select id="pProvince" class="select" required onchange="updateProfileCities()"><option value="مازندران" '+(profileProvince==='مازندران'?'selected':'')+'>مازندران</option><option value="گیلان" '+(profileProvince==='گیلان'?'selected':'')+'>گیلان</option></select></div><div class="form-group"><label>شهر <span style="color:red">*</span></label><select id="pCity" class="select" required><option value="">انتخاب کنید</option>'+cityOptions+'</select></div><div class="form-group"><label>روستا (اختیاری)</label><input id="pVillage" class="input" value="'+escapeHtml(p.village||"")+'"></div>';
@@ -29,10 +26,7 @@
       const citySelect=document.getElementById("pCity");
       if(!citySelect)return;
       const current=citySelect.value;
-      const provinceCities={
-          "مازندران":["آمل","بابل","بابلسر","بهشهر","تنکابن","جویبار","چالوس","رامسر","ساری","سوادکوه","سوادکوه شمالی","سیمرغ","عباس‌آباد","فریدون‌کنار","قائم‌شهر","کلاردشت","گلوگاه","محمودآباد","میاندورود","نکا","نور","نوشهر"],
-          "گیلان":["آستانه اشرفیه","آستارا","املش","بندر انزلی","رشت","رضوانشهر","رودبار","رودسر","سیاهکل","شفت","صومعه‌سرا","طوالش","فومن","لاهیجان","لنگرود","ماسال"]
-      };
+      const provinceCities = (typeof KELO_GEOGRAPHY !== "undefined" && KELO_GEOGRAPHY) ? KELO_GEOGRAPHY : {"مازندران":[],"گیلان":[]};
       citySelect.innerHTML='<option value="">انتخاب کنید</option>'+(provinceCities[province]||[]).map(c=>'<option value="'+escapeHtml(c)+'">'+escapeHtml(c)+'</option>').join('');
       if((provinceCities[province]||[]).includes(current)) citySelect.value=current;
   }
@@ -98,11 +92,11 @@
           + '</div>'
           + '<div class="profile-menu-list">'
           +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'invoice\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg></span><span>فاکتور</span><i class="kelo-chevron left"></i></button>'
-          +   '<button type="button" class="profile-menu-row" onclick="showToast(\'به‌زودی\',\'info\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>تنظیمات</span><i class="kelo-chevron left"></i></button>'
-          +   '<button type="button" class="profile-menu-row" onclick="showToast(\'به‌زودی\',\'info\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span><span>حریم خصوصی</span><i class="kelo-chevron left"></i></button>'
-          +   '<button type="button" class="profile-menu-row" onclick="showToast(\'به‌زودی\',\'info\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span><span>راهنما و پشتیبانی</span><i class="kelo-chevron left"></i></button>'
-          +   '<button type="button" class="profile-menu-row" onclick="showToast(\'به‌زودی\',\'info\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z"/><path d="M9 7h4M9 11h6M9 15h6"/></svg></span><span>قوانین و شرایط استفاده</span><i class="kelo-chevron left"></i></button>'
-          +   '<button type="button" class="profile-menu-row" onclick="showToast(\'به‌زودی\',\'info\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span><span>درباره Kelo</span><i class="kelo-chevron left"></i></button>'
+          +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'settings\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>تنظیمات</span><i class="kelo-chevron left"></i></button>'
+          +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'privacy\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span><span>حریم خصوصی</span><i class="kelo-chevron left"></i></button>'
+          +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'support\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></span><span>راهنما و پشتیبانی</span><i class="kelo-chevron left"></i></button>'
+          +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'terms\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z"/><path d="M9 7h4M9 11h6M9 15h6"/></svg></span><span>قوانین و شرایط استفاده</span><i class="kelo-chevron left"></i></button>'
+          +   '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'about\')"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span><span>درباره Kelo</span><i class="kelo-chevron left"></i></button>'
           +   '<button type="button" class="profile-menu-row logout" onclick="closeMobileAccountSheet();logout()"><span class="profile-menu-icon"><svg viewBox="0 0 24 24"><path d="M10 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20H10"/><path d="M13 7l5 5-5 5M18 12H9"/></svg></span><span>خروج از حساب</span></button>'
           + '</div>'
           + '</div>';
@@ -151,7 +145,7 @@
               ? '<span class="invoice-rate-done">' + toPersianDigits(myAvg.toFixed(1)) + ' ★</span>'
               : '<button type="button" class="invoice-rate-btn" onclick="event.stopPropagation();openDealReport(\'' + d.id + '\')">ثبت امتیاز</button>';
 
-          return '<div class="mobile-activity-card kelo-service-card invoice-deal-card" onclick="openInvoiceDetail(\'' + d.id + '\')">'
+          return '<div class="mobile-activity-card kelo-service-card invoice-deal-card" data-deal-id="' + String(d.id) + '" onclick="openInvoiceDetail(\'' + d.id + '\')">'
               + '<div class="invoice-card-head">'
               +   '<strong class="invoice-card-title">' + escapeHtml(title) + '</strong>'
               +   rateBtn
@@ -225,11 +219,124 @@
 
   global.mobileAccountEditMarkup = mobileAccountEditMarkup;
 
-  function renderMobileAccountSection(section){
+
+  function keloPref(key, def) {
+      try {
+          var v = localStorage.getItem('kelo_pref_' + key);
+          if (v === null || v === undefined) return def;
+          if (v === 'true') return true;
+          if (v === 'false') return false;
+          return v;
+      } catch (e) { return def; }
+  }
+  function keloSetPref(key, val) {
+      try { localStorage.setItem('kelo_pref_' + key, String(val)); } catch (e) {}
+  }
+  function applyKeloTheme() {
+      var dark = keloPref('darkMode', false);
+      document.documentElement.classList.toggle('kelo-theme-dark', !!dark);
+      document.body.classList.toggle('kelo-theme-dark', !!dark);
+  }
+  function toggleKeloNotifPref(el) {
+      var on = !!(el && el.checked);
+      keloSetPref('notifications', on);
+      if (typeof showToast === 'function') showToast(on ? 'اعلان‌ها فعال شد' : 'اعلان‌ها غیرفعال شد', 'info');
+  }
+  function toggleKeloDarkPref(el) {
+      var on = !!(el && el.checked);
+      keloSetPref('darkMode', on);
+      applyKeloTheme();
+      if (typeof showToast === 'function') showToast(on ? 'حالت شب فعال شد' : 'حالت روز فعال شد', 'info');
+  }
+  global.toggleKeloNotifPref = toggleKeloNotifPref;
+  global.toggleKeloDarkPref = toggleKeloDarkPref;
+  global.applyKeloTheme = applyKeloTheme;
+
+  function mobileAccountInnerHeader(title) {
+      return '<div class="mobile-account-head inner">'
+          + '<button type="button" class="mobile-account-back" onclick="openMobileAccountSection(\'profile\')" aria-label="بازگشت">' + KELO_BACK_CHEVRON_SVG + '</button>'
+          + '<h2 class="mobile-account-title">' + escapeHtml(title) + '</h2><span></span></div>';
+  }
+
+  function mobileAccountSettingsMarkup() {
+      var notifOn = keloPref('notifications', true);
+      return mobileAccountInnerHeader('تنظیمات')
+          + '<div class="mobile-account-body profile-info-body">'
+          + '<div class="profile-toggle-row"><div><strong>اعلان‌ها</strong><span class="profile-toggle-hint">دریافت اعلان پیشنهاد، توافق و پرداخت</span></div>'
+          + '<label class="kelo-switch"><input type="checkbox" ' + (notifOn ? 'checked' : '') + ' onchange="toggleKeloNotifPref(this)"><span class="kelo-switch-slider"></span></label></div>'
+          + '<button type="button" class="profile-menu-row" style="margin-top:8px" onclick="showToast(&quot;حالت نمایش شب به‌زودی آماده می‌شود&quot;,&quot;info&quot;)"><span>حالت نمایش شب / روز</span><i class="kelo-chevron left"></i></button>'
+          + '</div>';
+  }
+
+  function mobileAccountPrivacyMarkup() {
+      return mobileAccountInnerHeader('حریم خصوصی')
+          + '<div class="mobile-account-body profile-info-body">'
+          + '<p class="profile-info-text">اطلاعات حساب و موقعیت شما فقط برای برقراری ارتباط و انجام توافق‌های خدمت استفاده می‌شود. Kelo شماره و موقعیت را در اختیار عموم قرار نمی‌دهد.</p>'
+          + '<div class="profile-menu-list" style="margin-top:12px">'
+          + '<button type="button" class="profile-menu-row" onclick="showToast(\'تغییر شماره همراه به‌زودی فعال می‌شود\',\'info\')"><span>تغییر شماره همراه</span><i class="kelo-chevron left"></i></button>'
+          + '<button type="button" class="profile-menu-row" onclick="showToast(\'تعریف رمز عبور به‌زودی جایگزین کد ملی می‌شود\',\'info\')"><span>تغییر رمز عبور</span><i class="kelo-chevron left"></i></button>'
+          + '</div></div>';
+  }
+
+  function mobileAccountSupportMarkup() {
+      return mobileAccountInnerHeader('راهنما و پشتیبانی')
+          + '<div class="mobile-account-body profile-info-body">'
+          + '<div class="profile-menu-list">'
+          + '<button type="button" class="profile-menu-row" onclick="openMobileAccountSection(\'faq\')"><span>سوالات متداول</span><i class="kelo-chevron left"></i></button>'
+          + '<button type="button" class="profile-menu-row" onclick="showToast(\'گفتگوی داخل برنامه به‌زودی آماده می‌شود\',\'info\')"><span>گفتگو</span><i class="kelo-chevron left"></i></button>'
+          + '<a class="profile-menu-row" href="tel:+989117802991" style="width:100%"><span>تماس تلفنی</span><i class="kelo-chevron left"></i></a>'
+          + '</div></div>';
+  }
+
+  function mobileAccountFaqMarkup() {
+      var items = [
+          ['چگونه درخواست ثبت کنم؟', 'از دکمه ثبت درخواست، نوع خدمت، زمان و مساحت را مشخص کنید.'],
+          ['قیمت چگونه تعیین می‌شود؟', 'قیمت را ارائه‌دهنده پیشنهاد می‌دهد و قبل از توافق می‌بینید.'],
+          ['پرداخت چه زمانی است؟', 'پس از توافق می‌توانید پرداخت کنید؛ در برخی موارد پس از اتمام کار.'],
+          ['چطور با پشتیبانی صحبت کنم؟', 'از همین بخش می‌توانید تماس بگیرید: ۰۹۱۱۷۸۰۲۹۹۱']
+      ];
+      var html = items.map(function (it) {
+          return '<div class="profile-faq-item"><strong>' + escapeHtml(it[0]) + '</strong><p>' + escapeHtml(it[1]) + '</p></div>';
+      }).join('');
+      return mobileAccountInnerHeader('سوالات متداول')
+          + '<div class="mobile-account-body profile-info-body">' + html + '</div>';
+  }
+
+  function mobileAccountTermsMarkup() {
+      return mobileAccountInnerHeader('قوانین و شرایط')
+          + '<div class="mobile-account-body profile-info-body">'
+          + '<p class="profile-info-text">استفاده از Kelo به معنای پذیرش این موارد است:</p>'
+          + '<ul class="profile-info-list">'
+          + '<li>مسئولیت صحت اطلاعات ثبت‌شده (خدمت، قیمت، زمان و موقعیت) با کاربر است.</li>'
+          + '<li>توافق نهایی بین کشاورز و ماشین‌دار انجام می‌شود؛ Kelo بستر ارتباط است.</li>'
+          + '<li>کارمزد یا کمیسیون اعلام‌شده در هر معامله شفاف و از پیش مشخص است.</li>'
+          + '<li>لغو توافق تنها در چارچوب وضعیت‌های مجاز برنامه امکان‌پذیر است.</li>'
+          + '<li>هرگونه سوءاستفاده یا اطلاعات نادرست می‌تواند منجر به محدودیت حساب شود.</li>'
+          + '</ul></div>';
+  }
+
+  function mobileAccountAboutMarkup() {
+      return mobileAccountInnerHeader('درباره Kelo')
+          + '<div class="mobile-account-body profile-info-body">'
+          + '<p class="profile-info-text"><strong>کلو</strong> پلتفرم اتصال کشاورز و ماشین‌دار است؛ بدون واسطه و با قیمت شفاف.</p>'
+          + '<p class="profile-info-text">هدف ما ساده‌تر کردن دسترسی به خدمات کشاورزی در مازندران و گیلان است: ثبت درخواست، دریافت پیشنهاد، توافق و انجام کار در یک مسیر مشخص.</p>'
+          + '<p class="profile-info-text">منطقه فعالیت فعلی: مازندران و گیلان.</p>'
+          + '<p class="profile-info-text">پشتیبانی: <a href="tel:+989117802991">۰۹۱۱۷۸۰۲۹۹۱</a></p>'
+          + '</div>';
+  }
+
+
+    function renderMobileAccountSection(section){
       const sheet=document.getElementById('mobileAccountSheet'); if(!sheet)return;
       if(section==='menu'){sheet.innerHTML=mobileAccountMenuMarkup();updateMobileAccountIdentity();attachSheetDragOnce(sheet);return;}
       if(section==='profile'){ sheet.innerHTML = mobileAccountProfileMarkup(); attachSheetDragOnce(sheet); return; }
       if(section==='invoice'){ sheet.innerHTML=mobileAccountInvoiceMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='settings'){ sheet.innerHTML=mobileAccountSettingsMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='privacy'){ sheet.innerHTML=mobileAccountPrivacyMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='support'){ sheet.innerHTML=mobileAccountSupportMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='faq'){ sheet.innerHTML=mobileAccountFaqMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='terms'){ sheet.innerHTML=mobileAccountTermsMarkup(); attachSheetDragOnce(sheet); return; }
+      if(section==='about'){ sheet.innerHTML=mobileAccountAboutMarkup(); attachSheetDragOnce(sheet); return; }
       if(section==='edit'){
         sheet.innerHTML = mobileAccountEditMarkup();
         requestAnimationFrame(function(){
@@ -308,6 +415,8 @@
   global.activateProfileMapPicker = activateProfileMapPicker;
 
   function activateProfileMapPickerForFirst(){
+      var nameEl = document.getElementById('firstProfileName');
+      if (nameEl) wizard._pendingFirstName = String(nameEl.value || '').trim();
       wizard._profileMapMode = 'first';
       wizard._pendingMapPoint = wizard._pendingProfileLocation ? cloneObject(wizard._pendingProfileLocation) : (currentUser.profileLocation ? cloneObject(currentUser.profileLocation) : null);
       openMobileMapPickerOverlay();
@@ -368,8 +477,17 @@
   function openInvoiceDetail(dealId){
       if(!currentUser) return;
       var d = (qdb().deals || []).find(function(x){ return String(x.id) === String(dealId) && isDealForUser(x); });
-      if(!d || d.status !== 'completed'){ showToast('فاکتور پیدا نشد','error'); return; }
+      if(!d){ showToast('فاکتور پیدا نشد','error'); return; }
+      // Invoice meaningful after complete; still open sheet for completed or paid+done flows
+      if(d.status !== 'completed' && d.status !== 'paid'){ showToast('فاکتور پس از اتمام کار در دسترس است','error'); return; }
       window.__keloInvoiceDetailDealId = String(dealId);
+      // Ensure account sheet is visible
+      var bd = document.getElementById('mobileAccountBackdrop');
+      if(bd && !bd.classList.contains('open')){
+          bd.classList.add('open');
+          bd.setAttribute('aria-hidden','false');
+          document.body.style.overflow='hidden';
+      }
       var req = (qdb().requests || []).find(function(r){ return r.id === d.requestId; });
       var parties = dealPartyNames(d);
       var service = serviceName((req && req.service) || d.service);
@@ -503,6 +621,7 @@ async function saveFirstProfile(e){
       if (window.KeloState && window.KeloState.setCurrentUser) window.KeloState.setCurrentUser(currentUser);
 
       wizard._pendingProfileLocation = null;
+      wizard._pendingFirstName = null;
       wizard._profileAutoGeoRequested = false;
       const av = document.getElementById('avatar'); if (av) av.innerText = currentUser.name;
       updateMobileAccountIdentity();
@@ -617,7 +736,7 @@ async function saveFirstProfile(e){
       const nav = document.getElementById('mobileBottomNav');
       if(nav) nav.classList.add('hidden');
       updateMobileHeader('تکمیل پروفایل');
-      const name = currentUser.name || '';
+      const name = (wizard._pendingFirstName != null && wizard._pendingFirstName !== '') ? wizard._pendingFirstName : (currentUser.name || '');
       const loc = currentUser.profileLocation;
       const previewRaw = wizard._pendingProfileLocation || loc;
       const previewLoc = previewRaw && typeof previewRaw.lat === 'number' && typeof previewRaw.lng === 'number'
@@ -690,4 +809,8 @@ async function saveFirstProfile(e){
   };
   // auto-register handlers already assigned to global above
 
+  try { applyKeloTheme(); } catch (e) {}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function(){ try { applyKeloTheme(); } catch (e) {} });
+  }
 })(typeof window !== 'undefined' ? window : globalThis);

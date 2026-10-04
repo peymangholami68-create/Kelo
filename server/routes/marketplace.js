@@ -23,6 +23,15 @@ function asUuid(v) {
   return s;
 }
 
+async function insertNotification(clientOrPool, userId, type, title, body, data) {
+  const q = clientOrPool.query.bind(clientOrPool);
+  await q(
+    `insert into notifications (user_id, type, title, body, data) values ($1, $2, $3, $4, $5::jsonb)`,
+    [userId, type, title, body || '', JSON.stringify(data || {})]
+  );
+}
+
+
 function servicePayload(row) {
   return {
     id: row.id,
@@ -197,7 +206,7 @@ const _closeExpiredTimer = setInterval(closeExpiredRecipients, CLOSE_EXPIRED_INT
 if (typeof _closeExpiredTimer.unref === 'function') _closeExpiredTimer.unref();
 
 async function getSnapshot(userId) {
-  const [requests, listings, recipients, bookings, deals, payments, machines, reviews] = await Promise.all([
+  const [requests, listings, recipients, bookings, deals, payments, machines, reviews, notifications] = await Promise.all([
     pool.query(`select r.*, p.full_name requester_name, s.slug service_slug, s.name service_name
       from requests r join service_types s on s.id=r.service_type_id left join profiles p on p.user_id=r.requester_id
       where r.requester_id=$1 or r.status in ('created','matching','sent','pending') order by r.created_at desc`, [userId]),
@@ -214,7 +223,8 @@ async function getSnapshot(userId) {
     pool.query(`select d.*, s.slug service_slug, pr.full_name requester_name, ur.phone requester_phone, pp.full_name provider_name, up.phone provider_phone, r.date_start, r.date_end, r.service_location_label, r.data request_data, r.area_ha request_area, r.service_location request_location, (select data->>'machineType' from requests where requester_id = d.provider_id and request_kind='provide' and service_type_id = d.service_type_id and status != 'cancelled' order by created_at desc limit 1) as provider_machine_type from deals d join service_types s on s.id=d.service_type_id left join profiles pr on pr.user_id=d.requester_id left join users ur on ur.id=d.requester_id left join profiles pp on pp.user_id=d.provider_id left join users up on up.id=d.provider_id left join requests r on r.id=d.request_id where d.requester_id=$1 or d.provider_id=$1 order by d.created_at desc`, [userId]),
     pool.query(`select * from payments where payer_id=$1 order by created_at desc`, [userId]),
     pool.query(`select m.*, p.full_name owner_name from machines m left join profiles p on p.user_id=m.owner_id where m.status='active' or m.owner_id=$1 order by m.created_at desc`, [userId]),
-    pool.query(`select r.* from reviews r where r.target_id=$1 or r.author_id=$1 order by r.created_at desc`, [userId])
+    pool.query(`select r.* from reviews r where r.target_id=$1 or r.author_id=$1 order by r.created_at desc`, [userId]),
+    pool.query(`select * from notifications where user_id=$1 order by created_at desc limit 80`, [userId])
   ]);
   return {
     requests: requests.rows.map(mapRequest),
@@ -224,7 +234,16 @@ async function getSnapshot(userId) {
     deals: deals.rows.map(mapDeal),
     payments: payments.rows.map(x => ({ id:x.id, dealId:x.deal_id, userId:x.payer_id, amount:Number(x.amount), status:x.status, createdAt:x.created_at, gatewayReference:x.gateway_reference })),
     machines: machines.rows.map(x => ({ id:x.id, ownerId:x.owner_id, owner:x.owner_name || '', type:x.machine_type, location:x.location_label || '', rating:Number(x.rating || 0), jobs:Number(x.completed_jobs || 0), services:{} })),
-    reviews: reviews.rows.map(mapReview)
+    reviews: reviews.rows.map(mapReview),
+    notifications: notifications.rows.map(x => ({
+      id: x.id,
+      type: x.type,
+      title: x.title,
+      body: x.body || '',
+      data: x.data || {},
+      readAt: x.read_at,
+      createdAt: x.created_at
+    }))
   };
 }
 
@@ -360,7 +379,17 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
       where r.request_kind='need' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
     needs.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:0,priceUnit:'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'need'}}); });
   }
-  res.json({ok:true,providers:out});
+    // Dedupe by providerId (listing + provide request can both match)
+  const seenProv = new Set();
+  const deduped = [];
+  for (const row of out) {
+    const k = String(row.providerId || '');
+    if (!k || seenProv.has(k)) continue;
+    seenProv.add(k);
+    deduped.push(row);
+  }
+  res.json({ok:true,providers:deduped});
+
 }catch(e){next(e)}});
 
 router.post('/requests/:id/recipients', auth, async (req, res, next) => {
@@ -568,7 +597,26 @@ router.delete('/request-recipients/:id', auth, async(req,res,next)=>{
     res.json({ok:true, data:await getSnapshot(req.session.userId)});
   } catch(e){ next(e); }
 });
-router.post('/request-recipients/:id/reject',auth,async(req,res,next)=>{try{const r=await pool.query(`update request_recipients set status='rejected',responded_at=now() where id=$1 and provider_id=$2 and status='pending' returning id`,[req.params.id,req.session.userId]);if(!r.rowCount)return res.status(404).json({ok:false,error:'این پیشنهاد دیگر قابل رد نیست.'});res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}});
+router.post('/request-recipients/:id/reject',auth,async(req,res,next)=>{
+  try{
+    const r=await pool.query(
+      `update request_recipients set status='rejected',responded_at=now()
+       where id=$1 and (provider_id=$2 or recipient_id=$2) and status='pending'
+       returning id, proposer_id, recipient_id, request_id`,
+      [req.params.id, req.session.userId]
+    );
+    if(!r.rowCount) return res.status(404).json({ok:false,error:'این پیشنهاد دیگر قابل رد نیست.'});
+    const row = r.rows[0];
+    const notifyUser = row.proposer_id;
+    if (notifyUser && String(notifyUser) !== String(req.session.userId)) {
+      await insertNotification(pool, notifyUser, 'proposal_rejected',
+        'پیشنهاد شما رد شد',
+        'پیشنهاد ارسال‌شده برای یک درخواست رد شد.',
+        { requestId: row.request_id, recipientId: row.id, kind: 'proposal_rejected' });
+    }
+    res.json({ok:true,data:await getSnapshot(req.session.userId)});
+  }catch(e){next(e)}
+});
 
 router.post('/request-recipients/:id/accept',auth,async(req,res,next)=>{try{const r=await pool.query('select * from accept_request_recipient($1,$2)',[req.params.id,req.session.userId]);const snap=await getSnapshot(req.session.userId);res.json({ok:true,bookingId:r.rows[0].booking_id,dealId:r.rows[0].deal_id,data:snap})}catch(e){const map={recipient_not_found:404,request_not_found:404,not_allowed:403,recipient_not_pending:409,request_not_open:409,request_already_agreed:409,machine_unavailable:409,provider_has_unfinished_deal:409};const status=map[e.message]||500;res.status(status).json({ok:false,error:e.message==='provider_has_unfinished_deal'?'برای پذیرش خدمت جدید ابتدا اتمام کار قبلی را ثبت کنید.':e.message})}});
 
@@ -586,6 +634,23 @@ router.post('/deals/:id/pay',auth,async(req,res,next)=>{
     await client.query(`update deals set payment_status='paid', status=(case when status='agreed' then 'paid' else status end) where id=$1`,[d.id]);
     const amount=Number(d.total)||0;
     if(amount>0){await client.query(`insert into payments(deal_id,payer_id,amount,gateway,status,paid_at,metadata) values($1,$2,$3,'cash','paid',now(),$4::jsonb)`,[d.id,req.session.userId,amount,JSON.stringify({method:'cash'})]);}
+    // Notify other party about payment
+    if (d.provider_id && String(d.provider_id) !== String(req.session.userId)) {
+      await insertNotification(client, d.provider_id, 'deal_paid',
+        'پرداخت توافق انجام شد',
+        'پرداخت مربوط به یکی از توافق‌های شما ثبت شد.',
+        { dealId: d.id, requestId: d.request_id, kind: 'deal_paid' });
+    }
+    // If work already completed, notify BOTH parties about invoice & rating
+    if (d.status === 'completed') {
+      for (const uid of [d.requester_id, d.provider_id]) {
+        if (!uid) continue;
+        await insertNotification(client, uid, 'deal_completed',
+          'مشاهده فاکتور و امتیازدهی',
+          'کار تمام و پرداخت شد. می‌توانید فاکتور را ببینید و امتیاز ثبت کنید.',
+          { dealId: d.id, requestId: d.request_id, kind: 'deal_completed' });
+      }
+    }
     await client.query('commit');
     res.json({ok:true,data:await getSnapshot(req.session.userId)});
   }catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}
@@ -605,8 +670,133 @@ router.post('/deals/:id/cancel',auth,async(req,res,next)=>{const client=await po
   // withdrew their own proposal, has responded_at/closed_at set already and
   // is correctly left alone.
   await client.query(`update request_recipients set status='pending',closed_at=null where request_id=$1 and status='closed' and responded_at is null`,[d.request_id]);
+  const otherId = String(d.requester_id) === String(req.session.userId) ? d.provider_id : d.requester_id;
+  if (otherId) {
+    const byProvider = String(req.session.userId) === String(d.provider_id);
+    await insertNotification(client, otherId, 'deal_cancelled',
+      'توافق لغو شد',
+      byProvider ? 'توافق شما توسط ماشین‌دار لغو شد.' : 'توافق شما توسط کشاورز لغو شد.',
+      { dealId: d.id, requestId: d.request_id, kind: 'deal_cancelled' });
+  }
   await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
 
-router.post('/deals/:id/complete',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and provider_id=$2 for update`,[req.params.id,req.session.userId])).rows[0];if(!d){await client.query('rollback');return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});}if(d.status==='completed'||d.status==='cancelled'){await client.query('rollback');return res.status(409).json({ok:false,error:'این توافق در وضعیتی نیست که بتوان آن را تکمیل کرد.'});}await client.query(`update deals set status='completed',completed_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='completed' where id=$1`,[d.booking_id]);await client.query(`update requests set status='completed' where id=$1`,[d.request_id]);await client.query(`update request_recipients set status='completed' where request_id=$1 and status='accepted'`,[d.request_id]);await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
+router.post('/deals/:id/complete',auth,async(req,res,next)=>{const client=await pool.connect();try{await client.query('begin');const d=(await client.query(`select * from deals where id=$1 and provider_id=$2 for update`,[req.params.id,req.session.userId])).rows[0];if(!d){await client.query('rollback');return res.status(404).json({ok:false,error:'توافق پیدا نشد.'});}if(d.status==='completed'||d.status==='cancelled'){await client.query('rollback');return res.status(409).json({ok:false,error:'این توافق در وضعیتی نیست که بتوان آن را تکمیل کرد.'});}await client.query(`update deals set status='completed',completed_at=now() where id=$1`,[d.id]);await client.query(`update bookings set status='completed' where id=$1`,[d.booking_id]);await client.query(`update requests set status='completed' where id=$1`,[d.request_id]);await client.query(`update request_recipients set status='completed' where request_id=$1 and status='accepted'`,[d.request_id]);
+  // Smart complete notification: unpaid → awaiting payment; paid → completed/invoice
+  const parties = [d.requester_id, d.provider_id].filter(Boolean);
+  const unpaid = String(d.payment_status || '') !== 'paid';
+  for (const uid of parties) {
+    if (String(uid) === String(req.session.userId)) continue;
+    if (unpaid) {
+      await insertNotification(client, uid, 'deal_awaiting_payment',
+        'کار تمام شد — در انتظار پرداخت',
+        'کار توافق‌شده به پایان رسید. پرداخت هنوز انجام نشده است.',
+        { dealId: d.id, requestId: d.request_id, kind: 'deal_awaiting_payment' });
+    } else {
+      await insertNotification(client, uid, 'deal_completed',
+        'کار به پایان رسید',
+        'کار تمام شد. می‌توانید کارت فاکتور را ببینید و امتیاز ثبت کنید.',
+        { dealId: d.id, requestId: d.request_id, kind: 'deal_completed' });
+    }
+  }
+  await client.query('commit');res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){try{await client.query('rollback')}catch(_){}next(e)}finally{client.release()}});
+
+// Mark all notifications as read for current user (dismiss badge)
+router.post('/notifications/read', auth, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(Boolean) : null;
+    if (ids && ids.length) {
+      await pool.query(
+        `update notifications set read_at = coalesce(read_at, now()) where user_id = $1 and id = any($2::uuid[])`,
+        [req.session.userId, ids]
+      );
+    } else {
+      await pool.query(
+        `update notifications set read_at = coalesce(read_at, now()) where user_id = $1 and read_at is null`,
+        [req.session.userId]
+      );
+    }
+    res.json({ ok: true, data: await getSnapshot(req.session.userId) });
+  } catch (e) { next(e); }
+});
+
+
+// —— Deal live location (provider shares, counterparty polls) ——
+const LOCATION_ACTIVE = new Set(['agreed', 'paid', 'in_progress', 'accepted']);
+
+function dealLocationAllowed(status, paymentStatus) {
+  if (!status || status === 'completed' || status === 'cancelled') return false;
+  if (LOCATION_ACTIVE.has(status)) return true;
+  if (paymentStatus === 'paid') return true;
+  return false;
+}
+
+router.put('/deals/:id/location', auth, async (req, res, next) => {
+  try {
+    const lat = Number(req.body && req.body.lat);
+    const lng = Number(req.body && req.body.lng);
+    const accuracy = req.body && req.body.accuracy != null ? Number(req.body.accuracy) : null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ ok: false, error: 'مختصات معتبر نیست.' });
+    }
+    const d = (await pool.query(
+      `select id, requester_id, provider_id, status, payment_status from deals where id=$1`,
+      [req.params.id]
+    )).rows[0];
+    if (!d) return res.status(404).json({ ok: false, error: 'توافق پیدا نشد.' });
+    const uid = req.session.userId;
+    if (String(d.provider_id) !== String(uid) && String(d.requester_id) !== String(uid)) {
+      return res.status(403).json({ ok: false, error: 'دسترسی ندارید.' });
+    }
+    if (!dealLocationAllowed(d.status, d.payment_status)) {
+      return res.status(409).json({ ok: false, error: 'اشتراک موقعیت برای این توافق فعال نیست.' });
+    }
+    await pool.query(
+      `insert into deal_locations (deal_id, user_id, lat, lng, accuracy, updated_at)
+       values ($1, $2, $3, $4, $5, now())
+       on conflict (deal_id) do update set
+         user_id = excluded.user_id,
+         lat = excluded.lat,
+         lng = excluded.lng,
+         accuracy = excluded.accuracy,
+         updated_at = now()`,
+      [d.id, uid, lat, lng, Number.isFinite(accuracy) ? accuracy : null]
+    );
+    res.json({ ok: true, lat, lng, updatedAt: new Date().toISOString() });
+  } catch (e) { next(e); }
+});
+
+router.get('/deals/:id/location', auth, async (req, res, next) => {
+  try {
+    const d = (await pool.query(
+      `select id, requester_id, provider_id, status, payment_status from deals where id=$1`,
+      [req.params.id]
+    )).rows[0];
+    if (!d) return res.status(404).json({ ok: false, error: 'توافق پیدا نشد.' });
+    const uid = req.session.userId;
+    if (String(d.provider_id) !== String(uid) && String(d.requester_id) !== String(uid)) {
+      return res.status(403).json({ ok: false, error: 'دسترسی ندارید.' });
+    }
+    // Counterparty's last location (prefer the other user's point)
+    const otherId = String(d.provider_id) === String(uid) ? d.requester_id : d.provider_id;
+    let row = (await pool.query(
+      `select lat, lng, accuracy, updated_at, user_id from deal_locations where deal_id=$1`,
+      [d.id]
+    )).rows[0];
+    if (!row) return res.json({ ok: true, location: null });
+    // Return whatever is stored (usually provider live point)
+    res.json({
+      ok: true,
+      location: {
+        lat: Number(row.lat),
+        lng: Number(row.lng),
+        accuracy: row.accuracy != null ? Number(row.accuracy) : null,
+        userId: row.user_id,
+        updatedAt: row.updated_at,
+        isCounterparty: String(row.user_id) === String(otherId) || String(row.user_id) !== String(uid)
+      }
+    });
+  } catch (e) { next(e); }
+});
+
 
 module.exports = router;
