@@ -1,8 +1,8 @@
 -- Reviews schema used by server/routes/marketplace.js
--- DROP first so we never keep the legacy 001 shape (reviewer_id/reviewee_id/rating).
-DROP TABLE IF EXISTS reviews CASCADE;
+-- Do NOT DROP — preserves existing ratings on upgrade.
+-- Legacy shape (reviewer_id/reviewee_id) is repaired only by 008 when detected.
 
-CREATE TABLE reviews (
+CREATE TABLE IF NOT EXISTS reviews (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   deal_id uuid NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
   author_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,

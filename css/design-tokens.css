@@ -1,0 +1,16 @@
+/* Kelo design tokens — single source of truth for active / radius / shadow */
+:root {
+  --color-active: var(--brand-gold, #C5B23E);
+  --color-active-dark: var(--brand-gold-dark, #9E8E24);
+  --color-active-light: #F5F0D4;
+  --color-active-text: #1F2A1E;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 4px 16px rgba(55, 65, 35, 0.08);
+  --shadow-raised: 0 8px 24px rgba(55, 65, 35, 0.12);
+  --shadow-modal: 0 24px 60px rgba(30, 40, 25, 0.28);
+}
