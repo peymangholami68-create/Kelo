@@ -40,6 +40,29 @@
     };
   }
 
+
+  function marketplaceMirror() {
+    if (global.KeloQueryService && typeof global.KeloQueryService.qdb === 'function') {
+      return global.KeloQueryService.qdb();
+    }
+    if (typeof global.qdb === 'function') return global.qdb();
+    return { requests: [], requestRecipients: [], deals: [] };
+  }
+
+  function hasActiveProposalBetween(requestId, userA, userB) {
+    var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
+    if (!D.hasActiveProposalBetween) return false;
+    var m = marketplaceMirror();
+    return D.hasActiveProposalBetween(m.requestRecipients, m.requests, requestId, userA, userB);
+  }
+
+  function providerHasUnfinishedDeal(providerId) {
+    var D = (global.KeloDomain && global.KeloDomain.deal) || {};
+    if (!D.providerHasUnfinishedDeal) return false;
+    var m = marketplaceMirror();
+    return D.providerHasUnfinishedDeal(m.deals, providerId);
+  }
+
   async function send(input) {
     var data = input || {};
     var user = currentUser();
@@ -252,6 +275,19 @@
     if (!adapter || typeof adapter.rejectProposal !== 'function') {
       return Result.fail(Errors.CODES.UNKNOWN, 'Adapter پیشنهاد در دسترس نیست.');
     }
+    // Domain gate in Service (Group C)
+    if (typeof adapter.getMarketplaceSnapshot === 'function') {
+      var snapRes = await adapter.getMarketplaceSnapshot();
+      var snap = (snapRes && snapRes.data) ? snapRes.data : (snapRes || {});
+      var rec = (snap.requestRecipients || []).find(function (x) {
+        return String(x.id) === String(data.id);
+      });
+      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
+      var gate = D.canReject ? D.canReject(rec, userId) : { ok: !!rec && rec.status === 'pending' };
+      if (!gate.ok) {
+        return Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد دیگر قابل رد نیست');
+      }
+    }
     return adapter.rejectProposal({ id: data.id, userId: userId });
   }
 
@@ -265,6 +301,18 @@
     if (!adapter || typeof adapter.cancelProposal !== 'function') {
       return Result.fail(Errors.CODES.UNKNOWN, 'Adapter پیشنهاد در دسترس نیست.');
     }
+    if (typeof adapter.getMarketplaceSnapshot === 'function') {
+      var snapRes = await adapter.getMarketplaceSnapshot();
+      var snap = (snapRes && snapRes.data) ? snapRes.data : (snapRes || {});
+      var rec = (snap.requestRecipients || []).find(function (x) {
+        return String(x.id) === String(data.id);
+      });
+      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
+      var gate = D.canCancel ? D.canCancel(rec, userId) : { ok: !!rec && rec.status === 'pending' };
+      if (!gate.ok) {
+        return Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد قابل لغو نیست');
+      }
+    }
     return adapter.cancelProposal({ id: data.id, userId: userId });
   }
 
@@ -272,7 +320,9 @@
     send: send,
     accept: accept,
     reject: reject,
-    cancel: cancel
+    cancel: cancel,
+    hasActiveProposalBetween: hasActiveProposalBetween,
+    providerHasUnfinishedDeal: providerHasUnfinishedDeal
   };
 
   global.KeloProposalService = proposalService;

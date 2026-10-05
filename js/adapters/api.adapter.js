@@ -55,9 +55,17 @@
             return Result.fail(Errors.CODES.CONFLICT, tooMany);
           }
           if (err && err.status === 401) {
-            var msg = authMode === 'admin'
+            var serverMsg = err.body && err.body.error;
+            var serverCode = err.body && err.body.code;
+            if (serverCode === 'NATIONAL_ID_MISMATCH' || (serverMsg && serverMsg.indexOf('کد ملی دیگری') !== -1)) {
+              return Result.fail(
+                Errors.CODES.NATIONAL_ID_MISMATCH,
+                serverMsg || Errors.messageFor(Errors.CODES.NATIONAL_ID_MISMATCH)
+              );
+            }
+            var msg = serverMsg || (authMode === 'admin'
               ? 'اطلاعات ورود مدیر صحیح نیست.'
-              : 'شماره همراه یا کد ملی صحیح نیست.';
+              : 'شماره همراه یا کد ملی صحیح نیست.');
             return Result.fail(Errors.CODES.LOGIN_FAILED, msg);
           }
           return Result.fromError(err, Errors.CODES.NETWORK, 'خطا در ارتباط با سرور.');
@@ -330,11 +338,64 @@
     },
 
     reportProblem: function (payload) {
-      // No dedicated server endpoint yet — keep local-only behavior message.
-      return Promise.resolve(Result.fail(
-        Errors.CODES.NOT_IMPLEMENTED,
-        'ثبت گزارش مشکل روی سرور هنوز فعال نیست.'
-      ));
+      var b = backend();
+      if (!b || typeof b.reportProblem !== 'function') {
+        return Promise.resolve(Result.fail(
+          Errors.CODES.SERVER_UNAVAILABLE,
+          Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)
+        ));
+      }
+      var p = payload || {};
+      return b.reportProblem({
+        dealId: p.dealId,
+        reason: p.reason || '',
+        note: p.note || ''
+      }).then(function (result) {
+        return Result.ok({ snapshot: result }, 'گزارش مشکل ثبت شد');
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'ثبت گزارش مشکل انجام نشد.');
+      });
+    },
+
+    markNotificationsRead: function (payload) {
+      var b = backend();
+      if (!b || typeof b.markNotificationsRead !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var ids = (payload && payload.ids) || [];
+      return b.markNotificationsRead(ids).then(function (result) {
+        return Result.ok({ snapshot: result, ids: ids });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'خواندن اعلان انجام نشد.');
+      });
+    },
+
+    updateDealLocation: function (payload) {
+      var b = backend();
+      if (!b || typeof b.updateDealLocation !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.updateDealLocation(p.dealId, {
+        lat: p.lat, lng: p.lng, accuracy: p.accuracy
+      }).then(function (result) {
+        return Result.ok({ snapshot: result });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'ارسال موقعیت انجام نشد.');
+      });
+    },
+
+    getDealLocation: function (payload) {
+      var b = backend();
+      if (!b || typeof b.getDealLocation !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.SERVER_UNAVAILABLE, Errors.messageFor(Errors.CODES.SERVER_UNAVAILABLE)));
+      }
+      var p = payload || {};
+      return b.getDealLocation(p.dealId).then(function (loc) {
+        return Result.ok({ location: loc });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'دریافت موقعیت انجام نشد.');
+      });
     },
 
     getProviders: function (payload) {

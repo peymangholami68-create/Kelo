@@ -4,13 +4,13 @@
 (function (global) {
   'use strict';
 
-    function qdb() {
+  function qdb() {
     var Q = global.KeloService && global.KeloService.query;
     if (Q && typeof Q.mirror === 'function') return Q.mirror();
-    if (typeof global.qdb === 'function' && global.qdb !== qdb) return global.qdb();
-    return global.db || {
+    if (typeof global.qdb === 'function') return global.qdb();
+    return {
       requests: [], deals: [], users: [], listings: [], machines: [],
-      requestRecipients: [], bookings: [], reviews: [], payments: []
+      requestRecipients: [], bookings: [], reviews: [], payments: [], notifications: []
     };
   }
 

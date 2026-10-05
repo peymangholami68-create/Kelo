@@ -7,7 +7,7 @@
   function qRecipients() {
     var Q = global.KeloService && global.KeloService.query;
     if (Q) return Q.recipients();
-    return (global.db && global.qRecipients()) || [];
+    return (typeof global.qdb === "function" && global.qdb().requestRecipients) || (global.qRecipients && global.qRecipients()) || [];
   }
 
 
@@ -52,7 +52,7 @@
           var pendingOffers = qRecipients().filter(function(o){ return String(o.providerId)===String(currentUser.id) && o.status==='pending'; }).length;
           var notifs = [];
           try {
-              notifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || (typeof db !== 'undefined' && db.notifications) || [];
+              notifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || [];
           } catch (e) { notifs = []; }
           var unreadNotifs = notifs.filter(function(n){ return !n.readAt && !n.read_at; }).length;
           var n = pendingOffers + unreadNotifs;

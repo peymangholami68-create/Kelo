@@ -1,5 +1,6 @@
 /**
  * KELO Location service — share / poll deal live locations
+ * Group C: uses Adapter only (no direct KeloBackend).
  */
 (function (global) {
   'use strict';
@@ -10,8 +11,11 @@
   var SEND_INTERVAL_MS = 15000;
   var POLL_INTERVAL_MS = 15000;
 
-  function backend() {
-    return global.KeloBackend || null;
+  function getAdapter() {
+    if (global.KeloService && typeof global.KeloService.adapter === 'function') {
+      return global.KeloService.adapter();
+    }
+    return global.KeloLocalAdapter || global.KeloApiAdapter || null;
   }
 
   function startSharingLocation(dealId) {
@@ -22,9 +26,10 @@
         var now = Date.now();
         if (now - _lastSentAt < SEND_INTERVAL_MS) return;
         _lastSentAt = now;
-        var api = backend();
-        if (!api || typeof api.updateDealLocation !== 'function') return;
-        api.updateDealLocation(dealId, {
+        var adapter = getAdapter();
+        if (!adapter || typeof adapter.updateDealLocation !== 'function') return;
+        adapter.updateDealLocation({
+          dealId: dealId,
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy
@@ -46,9 +51,14 @@
     stopPollingCounterpartyLocation();
     if (!dealId) return;
     var tick = function () {
-      var api = backend();
-      if (!api || typeof api.getDealLocation !== 'function') return;
-      api.getDealLocation(dealId).then(function (loc) {
+      var adapter = getAdapter();
+      if (!adapter || typeof adapter.getDealLocation !== 'function') return;
+      adapter.getDealLocation({ dealId: dealId }).then(function (res) {
+        var loc = res && res.data && res.data.location !== undefined
+          ? res.data.location
+          : (res && res.location !== undefined ? res.location : (res && res.data) || null);
+        // Result.ok wraps as { ok, data: { location } }
+        if (res && res.ok && res.data) loc = res.data.location;
         if (loc && typeof onUpdate === 'function') onUpdate(loc);
       }).catch(function () {});
     };
@@ -75,4 +85,5 @@
     stopPollingCounterpartyLocation: stopPollingCounterpartyLocation,
     stopAll: stopAll
   };
+  if (global.KeloService) global.KeloService.location = global.KeloLocationService;
 })(typeof window !== 'undefined' ? window : globalThis);

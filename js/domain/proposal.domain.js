@@ -59,10 +59,12 @@
   }
 
   /**
-   * Resolve effective request when anchor is a provide ad.
+   * Optional metadata helper: related need for a provide ad (dates/labels).
+   * MUST NOT be used to rebind proposal.requestId — reciprocal rules are
+   * scoped only to the current request (Group B).
    */
-  function resolveEffectiveRequest(requests, anchorRequest, counterpartyId) {
-    if (!anchorRequest || anchorRequest.requestKind !== 'provide') return anchorRequest;
+  function resolveRelatedNeedRequest(requests, anchorRequest, counterpartyId) {
+    if (!anchorRequest || anchorRequest.requestKind !== 'provide') return null;
     requests = requests || [];
     var farmerReq = requests
       .filter(function (r) {
@@ -74,7 +76,12 @@
       .sort(function (a, b) {
         return new Date(b.createdAt || b.created || 0) - new Date(a.createdAt || a.created || 0);
       })[0];
-    return farmerReq || anchorRequest;
+    return farmerReq || null;
+  }
+
+  /** @deprecated use resolveRelatedNeedRequest; kept for compatibility */
+  function resolveEffectiveRequest(requests, anchorRequest, counterpartyId) {
+    return resolveRelatedNeedRequest(requests, anchorRequest, counterpartyId) || anchorRequest;
   }
 
   function canReject(recipient, userId) {
@@ -110,16 +117,15 @@
     if (isRequestLocked(request.status)) {
       return { ok: false, code: 'REQUEST_INVALID_STATE', message: 'این درخواست قبلاً توافق شده است' };
     }
-    var effectiveRequest = resolveEffectiveRequest(ctx.requests, request, ctx.providerId);
+    // Group B: reciprocal / duplicate only on THIS request id — never rebind to another need/provide.
+    var targetProviderId = ctx.providerId;
     var anchorIds = {};
     anchorIds[String(request.id)] = true;
-    anchorIds[String(effectiveRequest.id)] = true;
 
-    if (hasActiveProposalBetween(ctx.recipients, ctx.requests, request.id, request.userId, ctx.providerId) ||
-        hasActiveProposalBetween(ctx.recipients, ctx.requests, effectiveRequest.id, request.userId, ctx.providerId)) {
+    if (hasActiveProposalBetween(ctx.recipients, ctx.requests, request.id, ctx.userId, targetProviderId)) {
       return { ok: false, code: 'PROPOSAL_NOT_ALLOWED', message: 'در این درخواست، بین شما و این کاربر یک پیشنهاد فعال وجود دارد' };
     }
-    if (hasDuplicateProposal(ctx.recipients, anchorIds, ctx.userId, ctx.providerId)) {
+    if (hasDuplicateProposal(ctx.recipients, anchorIds, ctx.userId, targetProviderId)) {
       return { ok: false, code: 'PROPOSAL_NOT_ALLOWED', message: ctx.alreadyMessage || 'پیشنهاد فعال از قبل وجود دارد' };
     }
 
@@ -130,7 +136,7 @@
     var total = ctx.total != null ? ctx.total : (Number(candidate.unitPrice) || 0);
     var recipient = {
       id: 'rr' + Date.now() + Math.random().toString(36).slice(2, 7),
-      requestId: effectiveRequest.id,
+      requestId: request.id,
       anchorRequestId: request.id,
       proposerId: ctx.userId,
       recipientId: candidate.providerId,
@@ -152,7 +158,7 @@
       ok: true,
       recipient: recipient,
       requestId: request.id,
-      effectiveRequestId: effectiveRequest.id,
+      effectiveRequestId: request.id,
       setRequestPending: true,
       successMessage: ctx.successMessage || 'پیشنهاد ارسال شد'
     };
@@ -273,6 +279,7 @@
     hasActiveProposalBetween: hasActiveProposalBetween,
     hasDuplicateProposal: hasDuplicateProposal,
     resolveEffectiveRequest: resolveEffectiveRequest,
+    resolveRelatedNeedRequest: resolveRelatedNeedRequest,
     canReject: canReject,
     canCancel: canCancel,
     planSend: planSend,

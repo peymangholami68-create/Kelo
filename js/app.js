@@ -193,16 +193,18 @@ function applyServerSnapshot(snapshot){
     db._serverSyncedAt=Date.now();
 }
 async function refreshServerSnapshot(render){
+    // Group C: no direct KeloBackend — only Sync / Service
     if (window.KeloSync && typeof window.KeloSync.bootstrapSnapshot === 'function') {
         const result = await window.KeloSync.bootstrapSnapshot();
         if (!result) return;
         applyServerSnapshot(result);
+    } else if (window.KeloService && typeof window.KeloService.bootstrap === 'function') {
+        const result = await window.KeloService.bootstrap();
+        if (result && result.data) applyServerSnapshot(result.data);
+        else if (result) applyServerSnapshot(result);
     } else {
-        if (!(window.KeloService && window.KeloService.mode && window.KeloService.mode() === 'server')) return;
-        const result = await window.KeloBackend.bootstrap();
-        applyServerSnapshot(result);
+        return;
     }
-    // اگر پروفایل کامل نیست، renderApp صفحه تکمیل پروفایل را پاک نکند
     if (render && currentUser && currentUser.profileCompleted) renderApp();
 }
 

@@ -40,6 +40,7 @@
     async sendRecipient(requestId,payload){return mutate('/requests/'+encodeURIComponent(requestId)+'/recipients','POST',payload);},
     async acceptRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id)+'/accept','POST',{});},
     async createReview(payload){return mutate('/reviews','POST',payload);},
+    async reportProblem(payload){return mutate('/deal-problems','POST',payload||{});},
     async rejectRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id)+'/reject','POST',{});},
     async cancelRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id),'DELETE',{});},
     async payDeal(id){return mutate('/deals/'+encodeURIComponent(id)+'/pay','POST',{});},

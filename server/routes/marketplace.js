@@ -281,6 +281,38 @@ router.post('/reviews', auth, async(req,res,next)=>{
     res.status(201).json({ok:true, data:await getSnapshot(req.session.userId)});
   } catch(e){ next(e); }
 });
+
+router.post('/deal-problems', auth, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const dealId = String(b.dealId || '');
+    const reason = String(b.reason || '').slice(0, 200);
+    const note = String(b.note || '').slice(0, 2000);
+    if (!dealId) return res.status(400).json({ ok: false, error: 'شناسه توافق مشخص نشده.' });
+    if (!reason && !note) return res.status(400).json({ ok: false, error: 'دلیل یا توضیح گزارش لازم است.' });
+
+    const deal = (await pool.query(
+      `select * from deals where id=$1 and (requester_id=$2 or provider_id=$2)`,
+      [dealId, req.session.userId]
+    )).rows[0];
+    if (!deal) return res.status(404).json({ ok: false, error: 'توافق پیدا نشد.' });
+    if (deal.status === 'cancelled') {
+      return res.status(409).json({ ok: false, error: 'برای توافق لغوشده نمی‌توان گزارش ثبت کرد.' });
+    }
+
+    const isFarmer = String(deal.requester_id) === String(req.session.userId);
+    const role = isFarmer ? 'farmer' : 'provider';
+
+    await pool.query(
+      `insert into deal_problems (deal_id, reporter_id, role, reason, note)
+       values ($1, $2, $3, $4, $5)`,
+      [dealId, req.session.userId, role, reason, note]
+    );
+
+    res.status(201).json({ ok: true, data: await getSnapshot(req.session.userId) });
+  } catch (e) { next(e); }
+});
+
 router.get('/bootstrap', auth, async (req, res, next) => {
   try { res.json({ ok: true, data: await getSnapshot(req.session.userId) }); } catch (e) { next(e); }
 });
@@ -457,18 +489,8 @@ router.post('/requests/:id/recipients', auth, async (req, res, next) => {
       }
     }
 
-    if (request.request_kind === 'provide') {
-      const farmerUserId = isOwner ? recipientId : proposerId;
-      const farmerReq = await client.query(
-        `select r.*, s.slug service_slug from requests r
-         join service_types s on s.id = r.service_type_id
-         where r.requester_id = $1 and r.request_kind = 'need' and r.service_type_id = $2
-           and r.status not in ('cancelled','completed','expired')
-         order by r.created_at desc limit 1 for update`,
-        [farmerUserId, request.service_type_id]
-      );
-      if (farmerReq.rows[0]) request = farmerReq.rows[0];
-    }
+    // Group B: do NOT rebind provide → another need request.
+    // Reciprocal uniqueness is scoped only to this request.id.
 
     const existing = await client.query(
       `select id from request_recipients

@@ -164,19 +164,16 @@
       id = String(id || '');
       notifId = notifId ? String(notifId) : '';
 
-      // Mark ONLY this notification as read
+      // Mark ONLY this notification as read — via NotificationService (Group C)
       (async function(){
           try {
-              if (notifId && window.KeloBackend && window.KeloBackend.isServerMode && window.KeloBackend.isServerMode()
-                  && typeof window.KeloBackend.markNotificationsRead === 'function') {
-                  var result = await window.KeloBackend.markNotificationsRead([notifId]);
-                  if (result && (result.data || result.ok) && typeof applyServerSnapshot === 'function') {
-                      applyServerSnapshot(result.data || result);
+              if (notifId && window.KeloNotificationService && typeof window.KeloNotificationService.markNotificationsRead === 'function') {
+                  var result = await window.KeloNotificationService.markNotificationsRead([notifId]);
+                  if (result && result.ok && result.data && result.data.snapshot && typeof applyServerSnapshot === 'function') {
+                      applyServerSnapshot(result.data.snapshot);
+                  } else if (result && result.ok && result.data && result.data.data && typeof applyServerSnapshot === 'function') {
+                      applyServerSnapshot(result.data.data);
                   }
-              } else if (notifId && typeof db !== 'undefined' && Array.isArray(db.notifications)) {
-                  db.notifications.forEach(function(n){
-                      if (String(n.id) === notifId) n.readAt = new Date().toISOString();
-                  });
               }
           } catch (e) {}
           if (typeof updateMobileHeader === 'function') {
@@ -255,7 +252,7 @@
           }
       } catch (e) {}
 
-      var allNotifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || (typeof db !== 'undefined' && db.notifications) || [];
+      var allNotifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || [];
       var serverNotifs = allNotifs.filter(function(n){ return !n.readAt && !n.read_at; })
           .slice()
           .sort(function(a,b){ return new Date(b.createdAt || 0) - new Date(a.createdAt || 0); });
@@ -317,8 +314,8 @@
   global.openMobileNotifications = openMobileNotifications;
 
 function hasActiveProposalForRequest(requestId, userA, userB){
-      if (window.KeloDomain && window.KeloDomain.proposal && window.KeloDomain.proposal.hasActiveProposalBetween) {
-          return window.KeloDomain.proposal.hasActiveProposalBetween(qdb().requestRecipients, qdb().requests, requestId, userA, userB);
+      if (window.KeloProposalService && typeof window.KeloProposalService.hasActiveProposalBetween === 'function') {
+          return window.KeloProposalService.hasActiveProposalBetween(requestId, userA, userB);
       }
       if(!requestId || !userA || !userB) return false;
       const a = String(userA);
@@ -371,8 +368,8 @@ function hasActiveProposalForRequest(requestId, userA, userB){
   global.sendOfferPeerLabel = sendOfferPeerLabel;
 
   function providerHasUnfinishedDeal(providerId){
-      if (window.KeloDomain && window.KeloDomain.deal && window.KeloDomain.deal.providerHasUnfinishedDeal) {
-          return window.KeloDomain.deal.providerHasUnfinishedDeal(qdb().deals, providerId);
+      if (window.KeloProposalService && typeof window.KeloProposalService.providerHasUnfinishedDeal === 'function') {
+          return window.KeloProposalService.providerHasUnfinishedDeal(providerId);
       }
       return qdb().deals.some(d=>d.providerId===providerId && d.status!=='completed' && d.status!=='cancelled');
   }

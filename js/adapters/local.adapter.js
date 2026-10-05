@@ -451,16 +451,15 @@
       return this.applyAcceptPlan(payload);
     },
 
+    /** Persistence-only reject (Domain gate in ProposalService). */
     rejectProposal: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
       var p = payload || {};
-      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
       var rec = (db.requestRecipients || []).find(function (x) { return String(x.id) === String(p.id); });
-      var gate = D.canReject ? D.canReject(rec, p.userId) : { ok: !!rec && rec.status === 'pending' };
-      if (!gate.ok) {
-        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد دیگر قابل رد نیست'));
+      if (!rec) {
+        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_NOT_FOUND, 'پیشنهاد پیدا نشد'));
       }
       rec.status = 'rejected';
       rec.respondedAt = new Date().toISOString();
@@ -468,16 +467,15 @@
       return Promise.resolve(Result.ok({ recipient: rec }, 'درخواست رد شد'));
     },
 
+    /** Persistence-only cancel (Domain gate in ProposalService). */
     cancelProposal: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
       var p = payload || {};
-      var D = (global.KeloDomain && global.KeloDomain.proposal) || {};
       var rec = (db.requestRecipients || []).find(function (x) { return String(x.id) === String(p.id); });
-      var gate = D.canCancel ? D.canCancel(rec, p.userId) : { ok: !!rec && rec.status === 'pending' };
-      if (!gate.ok) {
-        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_ALREADY_HANDLED, gate.reason || 'این پیشنهاد قابل لغو نیست'));
+      if (!rec) {
+        return Promise.resolve(Result.fail(Errors.CODES.PROPOSAL_NOT_FOUND, 'پیشنهاد پیدا نشد'));
       }
       rec.status = 'closed';
       rec.closedAt = new Date().toISOString();
@@ -654,36 +652,69 @@
       return Promise.resolve(Result.ok({ problem: item }, 'گزارش مشکل ثبت شد'));
     },
 
+    /** Data-only: request lookup. Eligibility runs in NotificationService. */
     getProviders: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
-      var h = (dataAccess.helpers) || {};
       var p = payload || {};
       var req = (db.requests || []).find(function (r) { return String(r.id) === String(p.requestId); });
       if (!req) {
         return Promise.resolve(Result.fail(Errors.CODES.REQUEST_NOT_FOUND, 'درخواست پیدا نشد'));
       }
-      var E = (global.KeloDomain && global.KeloDomain.eligibility) || {};
-      var candidates = [];
-      if (E.getEligibleProviders) {
-        candidates = E.getEligibleProviders({
-          request: req,
-          listings: db.listings || [],
-          machines: db.machines || [],
-          users: db.users || [],
-          bookings: db.bookings || [],
-          parseDate: h.parseStoredDate || (global.KeloDomain && global.KeloDomain.pricing && global.KeloDomain.pricing.parseIsoishDate),
-          geo: {
-            nearestCityFromCoords: h.nearestCityFromCoords || null,
-            provinceFromCity: h.provinceFromCity || null,
-            formatActivityArea: h.formatActivityArea || null
-          }
-        }) || [];
-      } else if (typeof h.getEligibleProvidersForRequest === 'function') {
-        candidates = h.getEligibleProvidersForRequest(req) || [];
+      return Promise.resolve(Result.ok({
+        providers: [],
+        request: req,
+        listings: db.listings || [],
+        machines: db.machines || [],
+        users: db.users || [],
+        bookings: db.bookings || []
+      }));
+    },
+
+    markNotificationsRead: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var ids = (payload && payload.ids) || [];
+      var idSet = {};
+      (ids || []).forEach(function (id) { idSet[String(id)] = true; });
+      var now = new Date().toISOString();
+      (db.notifications || []).forEach(function (n) {
+        if (idSet[String(n.id)]) n.readAt = now;
+      });
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ ids: ids }));
+    },
+
+    updateDealLocation: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      db.dealLocations = db.dealLocations || {};
+      if (!p.dealId) {
+        return Promise.resolve(Result.fail(Errors.CODES.VALIDATION, 'dealId لازم است'));
       }
-      return Promise.resolve(Result.ok({ providers: candidates, request: req }));
+      db.dealLocations[String(p.dealId)] = {
+        lat: p.lat,
+        lng: p.lng,
+        accuracy: p.accuracy,
+        updatedAt: new Date().toISOString(),
+        userId: p.userId || null
+      };
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ location: db.dealLocations[String(p.dealId)] }));
+    },
+
+    getDealLocation: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      db.dealLocations = db.dealLocations || {};
+      var loc = db.dealLocations[String(p.dealId)] || null;
+      return Promise.resolve(Result.ok({ location: loc }));
     },
   };
 
