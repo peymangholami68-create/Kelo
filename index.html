@@ -44,7 +44,7 @@
         </div>
         <div class="nav-links" id="landingNavLinks">
                 <div class="nav-dropdown">
-                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">خدمات<span class="nav-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">خدمات<span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></button>
                     <div class="nav-dropdown-menu">
                         <button type="button" onclick="showLandingPage('services')">همه خدمات</button>
                         <button type="button" onclick="showLandingPage('services-plow')">شخم و دیسک</button>
@@ -54,7 +54,7 @@
                     </div>
                 </div>
                 <div class="nav-dropdown">
-                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">مجله کشاورزی<span class="nav-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">مجله کشاورزی<span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></button>
                     <div class="nav-dropdown-menu">
                         <button type="button" onclick="showLandingPage('mag-guide')">راهنمای انتخاب ماشین‌آلات</button>
                         <button type="button" onclick="showLandingPage('mag-types')">انواع ماشین‌آلات</button>
@@ -63,21 +63,21 @@
                     </div>
                 </div>
                 <div class="nav-dropdown">
-                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">کشاورزان<span class="nav-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">کشاورزان<span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></button>
                     <div class="nav-dropdown-menu">
                         <button type="button" onclick="showLandingPage('farmers-how')">چطور کار می‌کند؟</button>
                         <button type="button" onclick="showLandingPage('farmers-why')">چرا کلو؟</button>
                     </div>
                 </div>
                 <div class="nav-dropdown">
-                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">ماشین‌داران<span class="nav-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">ماشین‌داران<span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></button>
                     <div class="nav-dropdown-menu">
                         <button type="button" onclick="showLandingPage('providers-how')">چطور کار می‌کند؟</button>
                         <button type="button" onclick="showLandingPage('providers-why')">چرا کلو؟</button>
                     </div>
                 </div>
                 <div class="nav-dropdown">
-                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">درباره کلو<span class="nav-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="nav-link" onclick="toggleNavDropdown(this, event)">درباره کلو<span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></button>
                     <div class="nav-dropdown-menu">
                         <button type="button" onclick="showLandingPage('about')">درباره ما</button>
                         <button type="button" onclick="showLandingPage('contact')">تماس با ما</button>
@@ -278,6 +278,13 @@
   function closeAllDropdowns() {
     document.querySelectorAll('#landingNavbar .nav-dropdown.open').forEach(function (el) {
       el.classList.remove('open');
+      var menu = el.querySelector('.nav-dropdown-menu');
+      if (menu) {
+        menu.style.top = '';
+        menu.style.right = '';
+        menu.style.left = '';
+        menu.style.minWidth = '';
+      }
     });
   }
 
@@ -314,7 +321,21 @@
     if (!dd) return;
     var wasOpen = dd.classList.contains('open');
     closeAllDropdowns();
-    if (!wasOpen) dd.classList.add('open');
+    if (!wasOpen) {
+      dd.classList.add('open');
+      if (typeof syncKeloNavHeight === 'function') syncKeloNavHeight();
+      var menu = dd.querySelector('.nav-dropdown-menu');
+      var nav = document.getElementById('landingNavbar');
+      if (menu && nav && window.matchMedia && window.matchMedia('(min-width:901px)').matches) {
+        var navH = nav.offsetHeight || 64;
+        var rect = btn.getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.top = navH + 'px';
+        menu.style.right = (window.innerWidth - rect.right) + 'px';
+        menu.style.left = 'auto';
+        menu.style.minWidth = Math.max(220, rect.width) + 'px';
+      }
+    }
   };
 
   window.showLandingHome = function () {
