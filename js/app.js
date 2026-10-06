@@ -311,6 +311,11 @@ function renderUser(){
 }
 
 function onMobilePlusClick(){
+    if (currentUser && typeof keloFarmerHasUnpaidBlock === 'function' && keloFarmerHasUnpaidBlock(currentUser.id)) {
+        if (typeof showToast === 'function') showToast('ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.', 'error');
+        else alert('ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.');
+        return;
+    }
     sessionStorage.removeItem('kelo_mobile_success');
     mobileRequestSuccess = false; mobileSuccessData = null;
     clearWizardDraft();
@@ -342,7 +347,15 @@ function renderMobileHome(){
         return '<button type="button" class="home-banner-dot' + (i === 0 ? ' is-active' : '') + '" data-index="' + i + '" aria-label="بنر ' + (i + 1) + '"></button>';
     }).join('');
     const n = banners.length;
+    var flowHtml = (typeof renderHomeFlowSection === 'function' && currentUser)
+        ? renderHomeFlowSection(currentUser)
+        : '';
+    var walletHtml = (typeof renderHomeWalletBar === 'function')
+        ? renderHomeWalletBar(currentUser)
+        : '';
     c.innerHTML = '<div class="mobile-home-page">'
+        + walletHtml
+        + flowHtml
         + '<div class="home-banner-slider" id="homeBannerSlider">'
         +   '<div class="home-banner-viewport">'
         +     '<div class="home-banner-track" id="homeBannerTrack" style="width:' + (n * 100) + '%">' + slides + '</div>'
@@ -351,6 +364,7 @@ function renderMobileHome(){
         + '</div>'
         + '</div>';
     initHomeBannerSlider();
+    if (typeof bindHomeFlowClicks === 'function') bindHomeFlowClicks(c);
 }
 
 function initHomeBannerSlider(){

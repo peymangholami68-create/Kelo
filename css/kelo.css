@@ -1753,3 +1753,55 @@ body.kelo-theme-dark .profile-info-text, body.kelo-theme-dark .profile-toggle-hi
 .kelo-mag .challenge-list li{text-align:justify}
 @media(max-width:900px){.kelo-mag .products.cols-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.kelo-mag .products.cols-3{grid-template-columns:1fr}}
+
+/* Home flow — درخواست در جریان */
+.home-flow-section{margin:0 0 16px;padding:0}
+.home-flow-heading{margin:0 0 10px;font-size:16px;font-weight:800;color:#1F1F1F;padding:0 2px}
+.home-flow-scroller{
+  display:flex;gap:12px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  padding:2px 2px 8px;scroll-snap-type:x mandatory;
+}
+.home-flow-scroller::-webkit-scrollbar{height:0}
+.home-flow-card{
+  flex:0 0 min(86%,320px);max-width:320px;scroll-snap-align:start;
+  text-align:right;border:1px solid #e8e6dc;background:#fff;
+  border-radius:var(--radius-md,14px);padding:16px 14px;
+  box-shadow:var(--shadow-card,0 2px 10px rgba(0,0,0,.04));
+  cursor:pointer;font:inherit;color:inherit;
+}
+.home-flow-card:active{transform:scale(.99)}
+.home-flow-title{font-size:14px;font-weight:800;line-height:1.7;color:#1F2A1E;margin:0 0 6px}
+.home-flow-sub{font-size:12px;font-weight:600;color:#5A635C;line-height:1.7}
+.home-flow-hint{margin-top:8px;font-size:11px;color:#7a7f78;line-height:1.7}
+.home-flow-empty{
+  background:#faf9f4;border:1px dashed #ddd8c8;border-radius:var(--radius-md,14px);
+  padding:18px 16px;text-align:center;
+}
+.home-flow-empty-text{margin:0 0 14px;font-size:13px;line-height:1.9;color:#555;text-align:justify}
+.home-flow-cta{width:100%;max-width:280px}
+
+/* Home wallet pill */
+.home-wallet-bar{
+  display:flex;align-items:center;gap:10px;
+  width:100%;box-sizing:border-box;
+  margin:0 0 14px;padding:12px 16px;
+  background:#fff;
+  border:1px solid #eceae0;
+  border-radius:999px;
+  box-shadow:0 2px 12px rgba(0,0,0,.04);
+  cursor:pointer;font:inherit;color:#1F1F1F;
+  -webkit-tap-highlight-color:transparent;
+}
+.home-wallet-bar:active{transform:scale(.99)}
+.home-wallet-icon{
+  flex-shrink:0;width:36px;height:36px;border-radius:50%;
+  display:grid;place-items:center;
+  background:var(--brand-gold,#C5B23E);color:#fff;
+}
+.home-wallet-label{font-size:15px;font-weight:800;color:#1F1F1F}
+.home-wallet-balance{
+  margin-right:auto;margin-left:8px;
+  font-size:13px;font-weight:700;color:#5A635C;
+  direction:ltr;unicode-bidi:isolate;
+}
+.home-wallet-chevron{flex-shrink:0;color:#9a9a92;display:grid;place-items:center}
