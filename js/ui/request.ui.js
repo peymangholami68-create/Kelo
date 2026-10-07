@@ -83,7 +83,8 @@
   function renderMobileRequestBase(){
       const sb = document.getElementById('sidebar');
       if(!sb) return;
-      sb.innerHTML = '<div class="mobile-request-base"><h2>چه کاری برایتان انجام دهیم؟</h2><p>یکی از گزینه‌های زیر را انتخاب کنید</p><div class="role-cards"><button type="button" class="role-card farmer" onclick="openMobileFormSheet(\'receive\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V9"/><path d="M12 13C12 7 6 5 6 5s0 6 6 8"/><path d="M12 13c0-6 6-8 6-8s0 6-6 8"/></svg></div><strong>نیاز به خدمت دارم</strong><span>برای زمین من تراکتور یا کمباین بفرست</span></button><button type="button" class="role-card machine" onclick="openMobileFormSheet(\'provide\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="18" r="3"/><circle cx="18" cy="18" r="2.5"/><path d="M2 14h3a2 2 0 0 1 2 2v3"/><path d="M7 13V6a1 1 0 0 1 1-1h3l2 5"/><path d="M13 10h4l2 4"/></svg></div><strong>خدمات ارائه می‌دم</strong><span>ماشین‌آلات من آماده کاره</span></button></div></div>';
+      var quick = (window.KeloAssets && currentUser && window.KeloAssets.quickPicksHtml) ? window.KeloAssets.quickPicksHtml(currentUser.id) : '';
+      sb.innerHTML = '<div class="mobile-request-base"><h2>چه کاری برایتان انجام دهیم؟</h2><p>یکی از گزینه‌های زیر را انتخاب کنید</p><div class="role-cards"><button type="button" class="role-card farmer" onclick="openMobileFormSheet(\'receive\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V9"/><path d="M12 13C12 7 6 5 6 5s0 6 6 8"/><path d="M12 13c0-6 6-8 6-8s0 6-6 8"/></svg></div><strong>نیاز به خدمت دارم</strong><span>برای زمین من تراکتور یا کمباین بفرست</span></button><button type="button" class="role-card machine" onclick="openMobileFormSheet(\'provide\')"><div class="role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="18" r="3"/><circle cx="18" cy="18" r="2.5"/><path d="M2 14h3a2 2 0 0 1 2 2v3"/><path d="M7 13V6a1 1 0 0 1 1-1h3l2 5"/><path d="M13 10h4l2 4"/></svg></div><strong>خدمات ارائه می‌دم</strong><span>ماشین‌آلات من آماده کاره</span></button></div>' + quick + '</div>';
   }
 
   global.renderMobileRequestBase = renderMobileRequestBase;
@@ -869,6 +870,13 @@ async function finalizeMobileForm(){
       }
       newId = (result.data && result.data.id) || null;
 
+      try {
+          if (!wasEdit && window.KeloAssets && typeof window.KeloAssets.captureFromRequest === 'function') {
+              var kindCap = (savedType === 'provide') ? 'provide' : 'need';
+              window.KeloAssets.captureFromRequest(currentUser.id, kindCap, savedService, data);
+          }
+      } catch (eCap) { console.warn('asset capture', eCap); }
+
       clearWizardDraft(); closeMobileFormSheet();
       if (wasEdit) {
           mobileRequestSuccess = false;
@@ -915,6 +923,12 @@ async function finalizeMobileForm(){
       }
       newId = (result.data && result.data.id) || null;
       if (!newId && result.data && result.data.request) newId = result.data.request.id;
+
+      try {
+          if (window.KeloAssets && typeof window.KeloAssets.captureFromRequest === 'function') {
+              window.KeloAssets.captureFromRequest(currentUser.id, requestKind === 'provide' ? 'provide' : 'need', savedService, data);
+          }
+      } catch (eCap2) { console.warn('asset capture', eCap2); }
 
       // Local map context (server path also sets requestId when available)
       if (newId) {

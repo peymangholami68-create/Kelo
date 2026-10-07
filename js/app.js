@@ -78,7 +78,7 @@ const defaultDB = {
         {id:"m2", owner:"محمد احمدی", type:"تراکتور", location:"ساری", rating:4.6, jobs:18, services:{tractor:3000000}},
         {id:"m3", owner:"محمد احمدی", type:"نشاکار", location:"قائم‌شهر", rating:4.4, jobs:12, services:{transplant:4500000}}
     ],
-    requests:[], offers:[], listings:[], requestRecipients:[], bookings:[], deals:[], payments:[]
+    requests:[], offers:[], listings:[], requestRecipients:[], bookings:[], deals:[], payments:[], lands:[], fleet:[]
 };
 const DB_VERSION = 39;
 
@@ -125,6 +125,8 @@ function initializeDB(){
     const base=stored && typeof stored==="object" ? stored : cloneDefaultDB();
     base.users=Array.isArray(base.users)?base.users:[];
     base.machines=Array.isArray(base.machines)?base.machines:[];
+    base.lands=Array.isArray(base.lands)?base.lands:[];
+    base.fleet=Array.isArray(base.fleet)?base.fleet:[];
     base.requests=Array.isArray(base.requests)?base.requests:[];
     base.offers=Array.isArray(base.offers)?base.offers:[];
     base.listings=Array.isArray(base.listings)?base.listings:[];

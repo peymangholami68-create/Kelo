@@ -1805,3 +1805,20 @@ body.kelo-theme-dark .profile-info-text, body.kelo-theme-dark .profile-toggle-hi
   direction:ltr;unicode-bidi:isolate;
 }
 .home-wallet-chevron{flex-shrink:0;color:#9a9a92;display:grid;place-items:center}
+
+/* Assets */
+.asset-body .asset-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #ecebe5}
+.asset-row-main{flex:1;min-width:0;text-align:right}
+.asset-row-main strong{display:block;font-size:14px}
+.asset-meta{display:block;font-size:12px;color:#72776d;margin-top:4px}
+.asset-del{flex-shrink:0;padding:6px 12px;font-size:12px;min-height:36px}
+.asset-quick-block{margin-top:20px;padding-top:8px}
+.asset-quick-title{font-size:15px;font-weight:800;margin:0 0 10px;color:#1F1F1F}
+.asset-quick-label{font-size:12px;font-weight:700;color:#5A635C;margin:12px 0 8px}
+.asset-quick-list{display:flex;flex-wrap:wrap;gap:8px}
+.asset-quick-chip{
+  border:1.5px solid #e5e5e5;background:#fff;border-radius:999px;padding:10px 14px;
+  font:inherit;font-size:13px;font-weight:700;cursor:pointer;color:#1F2A1E;
+}
+.asset-quick-chip.machine{border-color:#e8d9a8}
+.asset-quick-chip:active{background:#faf9f4}
