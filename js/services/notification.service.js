@@ -74,18 +74,7 @@
     var list = Array.isArray(ids) ? ids.filter(Boolean) : [];
     var adapter = getAdapter();
     if (!adapter || typeof adapter.markNotificationsRead !== 'function') {
-      // Local soft path via query mirror
-      var q = global.KeloQueryService;
-      var notifs = (q && typeof q.qdb === 'function' ? q.qdb().notifications : null)
-        || (typeof global.qdb === 'function' ? global.qdb().notifications : null)
-        || [];
-      if (list.length && Array.isArray(notifs)) {
-        var now = new Date().toISOString();
-        notifs.forEach(function (n) {
-          if (list.indexOf(String(n.id)) >= 0) n.readAt = now;
-        });
-      }
-      return Result.ok({ ids: list });
+      return Result.fail(Errors.CODES.UNKNOWN, 'Adapter اعلان در دسترس نیست.');
     }
     return adapter.markNotificationsRead({ ids: list });
   }

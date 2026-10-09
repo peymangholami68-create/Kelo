@@ -8,6 +8,7 @@
   var Errors = global.KeloErrors;
   var State = global.KeloState;
 
+
   function getAdapter() {
     if (global.KeloService && typeof global.KeloService.adapter === 'function') {
       return global.KeloService.adapter();
@@ -36,16 +37,54 @@
     if (!data.service) {
       return Result.fail(Errors.CODES.VALIDATION, 'خدمت انتخاب نشده است.');
     }
+    var kind = (data.requestKind === 'provide') ? 'provide' : 'need';
+    var adapter0 = getAdapter();
+    if (kind === 'need' && adapter0 && typeof adapter0.hasUnpaidCompletedDeal === 'function') {
+      var unpaidRes = await adapter0.hasUnpaidCompletedDeal({ userId: userId });
+      var blocked = unpaidRes && unpaidRes.ok && unpaidRes.data && unpaidRes.data.blocked;
+      if (blocked) {
+        return Result.fail(Errors.CODES.CONFLICT, 'ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.');
+      }
+    }
+    var form = data.data || {};
+    if (kind === 'need') {
+      var area = form.area != null ? Number(form.area) : null;
+      if (area == null || !(area > 0)) {
+        return Result.fail(Errors.CODES.VALIDATION, 'مساحت زمین برای درخواست نیاز الزامی است.');
+      }
+      if (!form.dateStart && !form.date) {
+        return Result.fail(Errors.CODES.VALIDATION, 'تاریخ شروع الزامی است.');
+      }
+    }
+    if (kind === 'provide') {
+      if (form.price == null || form.price === '' || !(Number(form.price) > 0)) {
+        return Result.fail(Errors.CODES.VALIDATION, 'قیمت برای ارائه خدمت الزامی است.');
+      }
+      if (!form.machineType) {
+        return Result.fail(Errors.CODES.VALIDATION, 'نوع ماشین‌آلات الزامی است.');
+      }
+    }
     var adapter = getAdapter();
     if (!adapter || typeof adapter.createRequest !== 'function') {
       return Result.fail(Errors.CODES.UNKNOWN, 'Adapter درخواست در دسترس نیست.');
     }
-    return adapter.createRequest({
+    if (kind === 'need' && form.landId) form.landId = form.landId;
+    if (kind === 'provide' && form.machineId) form.machineId = form.machineId;
+    return Promise.resolve(adapter.createRequest({
       userId: userId,
       requesterName: data.requesterName || (user && user.name) || '',
       service: data.service,
-      data: data.data || {},
-      requestKind: data.requestKind === 'provide' ? 'provide' : 'need'
+      data: form,
+      requestKind: kind
+    })).then(function (result) {
+      if (result && result.ok && global.KeloAssetsService && typeof global.KeloAssetsService.captureFromRequest === 'function') {
+        try {
+          return Promise.resolve(global.KeloAssetsService.captureFromRequest(userId, kind, data.service, form)).then(function () {
+            return result;
+          });
+        } catch (e) { return result; }
+      }
+      return result;
     });
   }
 

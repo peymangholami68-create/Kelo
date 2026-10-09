@@ -71,7 +71,8 @@
       // raster tiles when the app is hosted normally, but provide a safe raster
       // fallback for local file:// testing and for environments that block the
       // OSM tile request before the page can render. Attribution stays visible.
-      const opts = Object.assign({}, options || {}, { attributionControl: true });
+      // Default attribution on, but allow callers to disable (e.g. land preview + edit-loc button)
+      const opts = Object.assign({ attributionControl: true }, options || {});
       if(center){ opts.center = center; }
       if(zoom !== null && zoom !== undefined){ opts.zoom = zoom; }
 
@@ -770,8 +771,11 @@
   function closeMobileLocationPicker(){
       wizard.mapPickMode = false;
       wizard._profileMapMode = false;
+      var wasAsset = !!wizard._assetMapMode;
+      wizard._assetMapMode = false;
       wizard._pendingMapPoint = null;
       closeMobileMapPickerOverlay();
+      if (wasAsset) return;
       if(wizard.formSheetOpen){ renderMobileFormSheet(); } else { renderWizard(); }
   }
 
@@ -779,6 +783,23 @@
 
   function confirmMobileLocationPicker(){
       if(wizard._pendingMapPoint && typeof wizard._pendingMapPoint.lat === 'number'){
+          if(wizard._assetMapMode){
+              const nearest = nearestCityFromCoords(wizard._pendingMapPoint.lat, wizard._pendingMapPoint.lng);
+              const province = nearest ? provinceFromCity(nearest) : null;
+              const loc = Object.assign({}, wizard._pendingMapPoint, {
+                  city: nearest || null,
+                  province: province,
+                  label: locationLabelFromCoords(wizard._pendingMapPoint.lat, wizard._pendingMapPoint.lng),
+                  source: 'map'
+              });
+              wizard._assetMapMode = false;
+              wizard._pendingMapPoint = null;
+              closeMobileMapPickerOverlay();
+              if (typeof global.keloAssetsAfterMapPick === 'function') {
+                  global.keloAssetsAfterMapPick(loc);
+              }
+              return;
+          }
           if(wizard._profileMapMode){
               const mode = wizard._profileMapMode;
               const nearest = nearestCityFromCoords(wizard._pendingMapPoint.lat, wizard._pendingMapPoint.lng);

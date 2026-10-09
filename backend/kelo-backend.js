@@ -37,6 +37,7 @@
     async updateListing(id,service,data){return mutate('/listings/'+encodeURIComponent(id),'PATCH',{service,data});},
     async deleteListing(id){return mutate('/listings/'+encodeURIComponent(id),'DELETE',{});},
     async getProviders(requestId){await init();return request('/requests/'+encodeURIComponent(requestId)+'/providers',{method:'GET'});},
+    async getTopProviders(opts){await init(); opts=opts||{}; var q='?minReviews='+encodeURIComponent(opts.minReviews||1)+'&limit='+encodeURIComponent(opts.limit||12); if(opts.service) q+='&service='+encodeURIComponent(opts.service); return request('/providers/top'+q,{method:'GET'});},
     async sendRecipient(requestId,payload){return mutate('/requests/'+encodeURIComponent(requestId)+'/recipients','POST',payload);},
     async acceptRecipient(id){return mutate('/request-recipients/'+encodeURIComponent(id)+'/accept','POST',{});},
     async createReview(payload){return mutate('/reviews','POST',payload);},

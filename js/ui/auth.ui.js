@@ -35,15 +35,28 @@
 
   function upsertAuthenticatedUserMirror(user){
       if(!user || !user.id) return user;
-      let local = qdb().users.find(function(u){ return String(u.id) === String(user.id); });
-      if(!local){
-          local = {};
-          qdb().users.push(local);
-      }
-      Object.assign(local, cloneObject(user));
-      if(!Array.isArray(local.systemRoles)) local.systemRoles=[];
-      if(!local.profile) local.profile={};
-      return local;
+      // Phase 3: no Query-layer mutation — Adapter via AuthService (or dataAccess getDB)
+      try {
+          if (window.KeloAuthService && typeof window.KeloAuthService.upsertUserMirror === 'function') {
+              var res = window.KeloAuthService.upsertUserMirror(user);
+              // sync path may return Promise — still merge into a local object for immediate UI
+              if (res && typeof res.then === 'function') {
+                  res.then(function (r) {
+                      if (r && r.ok && r.data && r.data.user && window.KeloState && window.KeloState.setCurrentUser) {
+                          window.KeloState.setCurrentUser(r.data.user);
+                      }
+                  }).catch(function () {});
+              } else if (res && res.ok && res.data && res.data.user) {
+                  return res.data.user;
+              }
+          }
+      } catch (e) { console.warn('upsertUserMirror', e); }
+      // Fallback read-only merge object (does not push to qdb)
+      var merged = cloneObject(user);
+      if (!Array.isArray(merged.systemRoles)) merged.systemRoles = [];
+      if (!merged.profile) merged.profile = {};
+      // Persist via saveDB path if local adapter already updated DB
+      return merged;
   }
 
   global.upsertAuthenticatedUserMirror = upsertAuthenticatedUserMirror;

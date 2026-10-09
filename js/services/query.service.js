@@ -44,7 +44,11 @@
       deals: [],
       reviews: [],
       payments: [],
-      notifications: []
+      notifications: [],
+      lands: [],
+      fleet: [],
+      offers: [],
+      proposals: []
     };
   }
 
@@ -62,7 +66,12 @@
       deals: db.deals || [],
       reviews: db.reviews || [],
       payments: db.payments || [],
-      notifications: db.notifications || []
+      notifications: db.notifications || [],
+      lands: db.lands || [],
+      fleet: db.fleet || [],
+      // Legacy alias: prefer requestRecipients; keep offers/proposals arrays if present
+      offers: (db.offers && db.offers.length) ? db.offers : (db.requestRecipients || []),
+      proposals: (db.proposals && db.proposals.length) ? db.proposals : (db.requestRecipients || [])
     };
   }
 

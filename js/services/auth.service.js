@@ -146,6 +146,14 @@
     return Result.ok({ user: user, mode: mode });
   }
 
+  async function upsertUserMirror(user) {
+    var adapter = getAdapter();
+    if (!adapter || typeof adapter.upsertUserMirror !== 'function') {
+      return Result.ok({ user: user });
+    }
+    return adapter.upsertUserMirror({ user: user });
+  }
+
   function getCurrentUser() {
     if (State && typeof State.getCurrentUser === 'function') {
       return State.getCurrentUser();
@@ -155,6 +163,7 @@
 
   var authService = {
     login: login,
+    upsertUserMirror: upsertUserMirror,
     logout: logout,
     restoreSession: restoreSession,
     getCurrentUser: getCurrentUser,

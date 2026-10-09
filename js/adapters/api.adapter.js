@@ -411,6 +411,105 @@
         return Result.fromError(err, Errors.CODES.UNKNOWN, 'دریافت پیشنهادهای قابل ارسال انجام نشد.');
       });
     },
+
+    upsertUserMirror: function (payload) {
+      // Server session is source of truth; local mirror optional no-op
+      var user = (payload && payload.user) ? payload.user : payload;
+      return Promise.resolve(Result.ok({ user: user || null }));
+    },
+
+    hasUnpaidCompletedDeal: function (payload) {
+      var b = backend();
+      var uid = payload && payload.userId;
+      if (b && typeof b.hasUnpaidCompletedDeal === 'function') {
+        return b.hasUnpaidCompletedDeal(uid).then(function (data) {
+          return Result.ok({ blocked: !!(data && data.blocked) });
+        }).catch(function () { return Result.ok({ blocked: false }); });
+      }
+      return Promise.resolve(Result.ok({ blocked: false }));
+    },
+    getDeal: function (payload) {
+      var b = backend();
+      if (!b || typeof b.getDeal !== 'function') {
+        return Promise.resolve(Result.fail(Errors.CODES.UNKNOWN, 'getDeal در API موجود نیست'));
+      }
+      return b.getDeal(payload && payload.id).then(function (data) {
+        return Result.ok({ deal: (data && data.deal) || data });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.DEAL_NOT_FOUND, 'معامله پیدا نشد');
+      });
+    },
+    getTopProviders: function (payload) {
+      var b = backend();
+      var p = payload || {};
+      if (!b || typeof b.getTopProviders !== 'function') {
+        // fallback path via raw fetch if bridge adds later
+        if (b && typeof b.apiGet === 'function') {
+          var q = '/providers/top?minReviews=' + encodeURIComponent(p.minReviews || 1) + '&limit=' + encodeURIComponent(p.limit || 12);
+          if (p.service) q += '&service=' + encodeURIComponent(p.service);
+          return b.apiGet(q).then(function (data) {
+            return Result.ok({ providers: (data && data.providers) || [], minReviews: (data && data.minReviews) || 1 });
+          }).catch(function (err) {
+            return Result.fromError(err, Errors.CODES.UNKNOWN, 'دریافت برترین‌ها انجام نشد.');
+          });
+        }
+        return Promise.resolve(Result.ok({ providers: [], minReviews: 3 }));
+      }
+      return b.getTopProviders(p).then(function (data) {
+        return Result.ok({ providers: (data && data.providers) || [], minReviews: (data && data.minReviews) || 1 });
+      }).catch(function (err) {
+        return Result.fromError(err, Errors.CODES.UNKNOWN, 'دریافت برترین‌ها انجام نشد.');
+      });
+    },
+    /** Assets: until server tables exist, persist via LocalAdapter mirror */
+    listLands: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.listLands === 'function') {
+        return global.KeloLocalAdapter.listLands(payload || {});
+      }
+      return Promise.resolve(Result.ok({ lands: [] }));
+    },
+    listFleet: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.listFleet === 'function') {
+        return global.KeloLocalAdapter.listFleet(payload || {});
+      }
+      return Promise.resolve(Result.ok({ fleet: [] }));
+    },
+    updateLand: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.updateLand === 'function') {
+        return global.KeloLocalAdapter.updateLand(payload || {});
+      }
+      return Promise.resolve(Result.fail('UNKNOWN', 'به‌روزرسانی زمین در دسترس نیست.'));
+    },
+    createLand: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.createLand === 'function') {
+        return global.KeloLocalAdapter.createLand(payload || {});
+      }
+      return Promise.resolve(Result.fail(Errors.CODES.UNKNOWN, 'ذخیره زمین در دسترس نیست.'));
+    },
+    deleteLand: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.deleteLand === 'function') {
+        return global.KeloLocalAdapter.deleteLand(payload || {});
+      }
+      return Promise.resolve(Result.fail(Errors.CODES.UNKNOWN, 'حذف زمین در دسترس نیست.'));
+    },
+    updateMachine: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.updateMachine === 'function') {
+        return global.KeloLocalAdapter.updateMachine(payload || {});
+      }
+      return Promise.resolve(Result.fail('UNKNOWN', 'به‌روزرسانی ماشین در دسترس نیست.'));
+    },
+    createMachine: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.createMachine === 'function') {
+        return global.KeloLocalAdapter.createMachine(payload || {});
+      }
+      return Promise.resolve(Result.fail(Errors.CODES.UNKNOWN, 'ذخیره ماشین در دسترس نیست.'));
+    },
+    deleteMachine: function (payload) {
+      if (global.KeloLocalAdapter && typeof global.KeloLocalAdapter.deleteMachine === 'function') {
+        return global.KeloLocalAdapter.deleteMachine(payload || {});
+      }
+      return Promise.resolve(Result.fail(Errors.CODES.UNKNOWN, 'حذف ماشین در دسترس نیست.'));
+    },
   };
 
   global.KeloApiAdapter = ApiAdapter;

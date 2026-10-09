@@ -599,6 +599,8 @@ async function cancelDeal(dealId){
       closeDealReport();
       showToast((result.message) || 'گزارش شما ثبت شد','success');
       if (typeof renderMobileProposals === 'function') renderMobileProposals();
+      if (typeof renderMobileHome === 'function') renderMobileHome();
+      if (typeof loadAndPaintHomeTopProviders === 'function') loadAndPaintHomeTopProviders(document.getElementById('homeTopProvidersMount') && document.getElementById('homeTopProvidersMount').parentElement);
       if (window.__keloInvoiceDetailDealId && String(window.__keloInvoiceDetailDealId) === String(dealId)) {
           openInvoiceDetail(dealId);
       } else if (document.getElementById('mobileAccountSheet') && document.querySelector('#mobileAccountSheet .invoice-deal-card, #mobileAccountSheet .invoice-summary-card')) {

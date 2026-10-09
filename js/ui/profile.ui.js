@@ -56,7 +56,7 @@
 
   global.accountMenuIcon = accountMenuIcon;
 
-  function mobileAccountMenuMarkup(){ return ''; }
+  function mobileAccountMenuMarkup(){ return typeof mobileAccountProfileMarkup === 'function' ? mobileAccountProfileMarkup() : ''; }
 
   global.mobileAccountMenuMarkup = mobileAccountMenuMarkup;
 

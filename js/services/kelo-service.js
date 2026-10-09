@@ -50,7 +50,9 @@
     deals: global.KeloDealService || null,
     payments: global.KeloPaymentService || null,
     notifications: global.KeloNotificationService || null,
-    query: global.KeloQueryService || null
+    query: global.KeloQueryService || null,
+    assets: global.KeloAssetsService || null,
+    providers: global.KeloProviderService || null
   };
 
   global.KeloService = KeloService;
@@ -76,7 +78,9 @@
   if (global.KeloNotificationService) {
     KeloService.notifications = global.KeloNotificationService;
   }
+  if (global.KeloProviderService) KeloService.providers = global.KeloProviderService;
   if (global.KeloQueryService) {
     KeloService.query = global.KeloQueryService;
+    if (global.KeloAssetsService) KeloService.assets = global.KeloAssetsService;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

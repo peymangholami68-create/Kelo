@@ -112,6 +112,24 @@
 
   function openMobileFormSheet(type){
       if(!currentUser) return;
+      if ((type === 'receive' || type === 'need') && typeof keloFarmerHasUnpaidBlock === 'function' && keloFarmerHasUnpaidBlock(currentUser.id)) {
+          if (typeof showToast === 'function') showToast('ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.', 'error');
+          else alert('ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.');
+          return;
+      }
+      // Need / Provide: dedicated pages (no classic form bottom-sheet)
+      if (type === 'receive' || type === 'need') {
+          if (typeof openNeedRequestPage === 'function') {
+              openNeedRequestPage();
+              return;
+          }
+      }
+      if (type === 'provide') {
+          if (typeof openProvideRequestPage === 'function') {
+              openProvideRequestPage();
+              return;
+          }
+      }
       wizard = makeEmptyWizard();
       wizard.type = type;
       wizard.formSheetOpen = true;
@@ -182,6 +200,9 @@
       const html = '<button type="button" class="mobile-sheet-handle"></button><div class="mobile-sheet-header"><button type="button" class="mobile-sheet-back-btn" onclick="closePriceUnitSheet()" aria-label="بازگشت">'+KELO_BACK_CHEVRON_SVG+'</button><h2>واحد قیمت</h2><span></span></div><div class="mobile-sheet-body" style="padding:6px 0 12px">'+listHtml+'</div>';
       let backdrop = document.getElementById('keloPriceUnitSheet');
       if(!backdrop){ backdrop = document.createElement('div'); backdrop.id='keloPriceUnitSheet'; backdrop.className='mobile-sheet-backdrop level3'; document.body.appendChild(backdrop); }
+      if (wizard && (wizard._provideFlow || wizard._needFlow || wizard.formSheetOpen)) {
+          backdrop.style.zIndex = '6500';
+      }
       backdrop.innerHTML = '<div class="mobile-sheet picker">'+html+'</div>';
   }
 
@@ -206,6 +227,7 @@
   global.closeMobileSelectSheet = closeMobileSelectSheet;
 
   function openActivityAreaSheet(){
+      // ensure above need/provide pages (z ~5200)
       wizard.activityProvince = '';
       wizard.activitySearch = '';
       wizard.activityOpen = true;
@@ -220,7 +242,9 @@
       wizard.activitySearch = '';
       const el = document.getElementById('keloActivityAreaSheet');
       if(el) el.remove();
-      if(wizard.formSheetOpen) renderMobileFormSheet();
+      if(wizard._provideFlow && typeof refreshProvideRequestFieldsOnly === 'function') refreshProvideRequestFieldsOnly();
+      else if(wizard._provideFlow && typeof renderProvideRequestPage === 'function') renderProvideRequestPage();
+      else if(wizard.formSheetOpen) renderMobileFormSheet();
   }
 
   global.closeActivityAreaSheet = closeActivityAreaSheet;
@@ -232,6 +256,9 @@
           backdrop.id='keloActivityAreaSheet';
           backdrop.className='mobile-sheet-backdrop level3';
           document.body.appendChild(backdrop);
+      }
+      if (wizard && (wizard._provideFlow || wizard._needFlow || wizard.formSheetOpen)) {
+          backdrop.style.zIndex = '6500';
       }
 
       const saved = getActivityAreaRows();
@@ -300,7 +327,9 @@
       saveWizardDraft();
       const el = document.getElementById('keloActivityAreaSheet');
       if(el) el.remove();
-      if(wizard.formSheetOpen) renderMobileFormSheet();
+      if(wizard._provideFlow && typeof refreshProvideRequestFieldsOnly === 'function') refreshProvideRequestFieldsOnly();
+      else if(wizard._provideFlow && typeof renderProvideRequestPage === 'function') renderProvideRequestPage();
+      else if(wizard.formSheetOpen) renderMobileFormSheet();
   }
 
   global.confirmActivityAreaSheet = confirmActivityAreaSheet;

@@ -208,8 +208,24 @@
           return;
       }
 
-      // Invoice: open profile → فاکتور list and highlight the CARD (not detail sheet)
-      if (kind === 'deal_completed' || kind === 'deal_awaiting_payment' || kind === 'deal_invoice' || kind === 'invoice') {
+      // Completed / awaiting payment → تب توافق (کارت توافق)
+      if (kind === 'deal_completed' || kind === 'deal_awaiting_payment' || kind === 'deal_paid' || kind === 'deal') {
+          setMobileOrdersSubTab('deals');
+          setMobileTab('proposals');
+          setTimeout(function(){
+              if (!id) return;
+              var card = document.querySelector('[data-deal-id="' + id + '"]');
+              if (card) {
+                  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  card.classList.add('kelo-card-highlight');
+                  setTimeout(function(){ card.classList.remove('kelo-card-highlight'); }, 1800);
+              }
+          }, 280);
+          return;
+      }
+
+      // Invoice only → profile invoice card
+      if (kind === 'deal_invoice' || kind === 'invoice') {
           setTimeout(function(){
               try {
                   if (typeof openMobileAccountSheet === 'function') openMobileAccountSheet();
@@ -252,6 +268,24 @@
           }
       } catch (e) {}
 
+      function formatNotifWhen(iso) {
+          if (!iso) return '';
+          try {
+              var d = new Date(iso);
+              if (isNaN(d.getTime())) return '';
+              var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+              var timeStr = pad(d.getHours()) + ':' + pad(d.getMinutes());
+              var day = '';
+              if (typeof global.humanJalaliDate === 'function') {
+                  day = global.humanJalaliDate(d.toISOString().slice(0,10));
+              } else {
+                  day = pad(d.getMonth()+1) + '/' + pad(d.getDate());
+              }
+              var full = day + ' · ' + timeStr;
+              if (typeof global.toPersianDigits === 'function') full = global.toPersianDigits(full);
+              return full;
+          } catch (e) { return ''; }
+      }
       var allNotifs = (typeof qdb === 'function' ? (qdb().notifications || []) : []) || [];
       var serverNotifs = allNotifs.filter(function(n){ return !n.readAt && !n.read_at; })
           .slice()
@@ -279,7 +313,10 @@
           cards.push(
               '<div class="mobile-activity-card notif-offer-card" role="button" tabindex="0" onclick="' + onclick + '">'
               + '<div class="activity-row"><div class="mobile-activity-main">'
-              + '<strong>' + escapeHtml(n.title || 'اعلان') + '</strong>'
+              + '<div class="notif-title-row">'
+              +   '<strong class="notif-title">' + escapeHtml(n.title || 'اعلان') + '</strong>'
+              +   '<span class="notif-time-chip">' + (typeof escapeHtml==='function'?escapeHtml(formatNotifWhen(n.createdAt||n.created_at)):'') + '</span>'
+              + '</div>'
               + '<span class="activity-meta">' + escapeHtml(n.body || '') + '</span>'
               + '</div></div></div>'
           );

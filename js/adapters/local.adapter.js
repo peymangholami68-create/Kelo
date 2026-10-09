@@ -62,6 +62,37 @@
     try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
   }
 
+
+  function averageFromRatingsObj(ratings) {
+    if (!ratings || typeof ratings !== 'object') return null;
+    var vals = Object.keys(ratings).map(function (k) { return Number(ratings[k]); }).filter(function (n) { return n > 0; });
+    if (!vals.length) return null;
+    var sum = vals.reduce(function (a, b) { return a + b; }, 0);
+    return Math.round((sum / vals.length) * 10) / 10;
+  }
+
+  function buildTargetRatingMap(db) {
+    var map = {};
+    (db.reviews || []).forEach(function (rev) {
+      var tid = String(rev.targetId || rev.target_id || rev.revieweeId || rev.reviewee_id || '');
+      if (!tid) return;
+      var avg = averageFromRatingsObj(rev.ratings);
+      if (avg == null && rev.rating != null) avg = Number(rev.rating);
+      if (avg == null || !(avg > 0)) return;
+      if (!map[tid]) map[tid] = { sum: 0, count: 0 };
+      map[tid].sum += avg;
+      map[tid].count += 1;
+    });
+    var out = {};
+    Object.keys(map).forEach(function (k) {
+      out[k] = {
+        rating: Math.round((map[k].sum / map[k].count) * 10) / 10,
+        reviewCount: map[k].count
+      };
+    });
+    return out;
+  }
+
   var LocalAdapter = {
     name: 'local',
 
@@ -148,6 +179,31 @@
       }
       return Promise.resolve(Result.ok(user));
     },
+    /**
+     * Merge authenticated user into local users store (via dataAccess, not Query).
+     */
+    upsertUserMirror: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var user = (payload && payload.user) ? payload.user : payload;
+      if (!user || !user.id) {
+        return Promise.resolve(Result.fail(Errors.CODES.VALIDATION, 'کاربر نامعتبر است.'));
+      }
+      var db = dataAccess.getDB();
+      db.users = db.users || [];
+      var local = db.users.find(function (u) { return String(u.id) === String(user.id); });
+      if (!local) {
+        local = { id: user.id };
+        db.users.push(local);
+      }
+      Object.keys(user).forEach(function (k) {
+        local[k] = user[k];
+      });
+      if (!Array.isArray(local.systemRoles)) local.systemRoles = [];
+      if (!local.profile) local.profile = {};
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ user: local }));
+    },
 
     /**
      * @param {{ userId: string, name: string, phone?: string, nationalId?: string, profile?: object, profileLocation?: object|null, profileCompleted?: boolean }} data
@@ -200,6 +256,7 @@
     saveFirstProfile: function (data) {
       return this.saveProfile(data);
     },
+    /** Persist only — unpaid + field validation belong in RequestService / Domain */
     createRequest: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
@@ -272,6 +329,17 @@
       });
       if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
       return Promise.resolve(Result.ok({ id: request.id, request: request }, 'درخواست حذف شد'));
+    },
+
+    getDeal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var deal = (db.deals || []).find(function (d) {
+        return String(d.id) === String(payload && payload.id);
+      });
+      if (!deal) return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله پیدا نشد'));
+      return Promise.resolve(Result.ok({ deal: deal }));
     },
 
     getRequest: function (payload) {
@@ -484,50 +552,37 @@
       return Promise.resolve(Result.ok({ recipient: rec }, 'ارسال لغو شد'));
     },
 
+    /** Persist cancel — Domain rules enforced in DealService */
     cancelDeal: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
       var p = payload || {};
-      var userId = String(p.userId || '');
-      var deal = (db.deals || []).find(function (x) {
-        return String(x.id) === String(p.id) &&
-          (String(x.userId) === userId || String(x.providerId) === userId) &&
-          x.status !== 'completed' && x.status !== 'cancelled' &&
-          x.paymentStatus !== 'paid';
-      });
+      var deal = (db.deals || []).find(function (d) { return String(d.id) === String(p.id); });
       if (!deal) {
         return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای لغو پیدا نشد یا قابل لغو نیست.'));
       }
       deal.status = 'cancelled';
       deal.cancelledAt = new Date().toISOString();
-      var booking = (db.bookings || []).find(function (b) { return String(b.id) === String(deal.bookingId); });
-      if (booking) booking.status = 'cancelled';
+      var req = (db.requests || []).find(function (r) { return String(r.id) === String(deal.requestId); });
+      if (req) req.status = 'pending';
       (db.requestRecipients || []).forEach(function (x) {
-        if (String(x.requestId) !== String(deal.requestId)) return;
-        if (x.status === 'accepted') {
+        if (String(x.requestId) === String(deal.requestId) && x.status === 'accepted') {
           x.status = 'closed';
           x.closedAt = new Date().toISOString();
-        } else if (x.status === 'closed' && !x.respondedAt) {
-          x.status = 'pending';
-          x.closedAt = null;
         }
       });
       if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
-      return Promise.resolve(Result.ok({ deal: deal }, 'کار لغو شد'));
+      return Promise.resolve(Result.ok({ deal: deal }, 'معامله لغو شد'));
     },
 
+    /** Persist complete — Domain rules enforced in DealService */
     completeDeal: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
       var p = payload || {};
-      var userId = String(p.userId || '');
-      var deal = (db.deals || []).find(function (x) {
-        return String(x.id) === String(p.id) &&
-          String(x.providerId) === userId &&
-          x.status !== 'completed' && x.status !== 'cancelled';
-      });
+      var deal = (db.deals || []).find(function (x) { return String(x.id) === String(p.id); });
       if (!deal) {
         return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای اتمام پیدا نشد یا مجاز نیستید.'));
       }
@@ -547,45 +602,34 @@
     /**
      * @param {{ id: string, userId: string, method?: 'cash'|'online'|'generic' }} payload
      */
+    /** Persist payment — Domain rules enforced in PaymentService */
     payDeal: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
       var db = dataAccess.getDB();
       var p = payload || {};
-      var userId = String(p.userId || '');
-      var method = p.method || 'generic';
-      var deal = (db.deals || []).find(function (x) {
-        return String(x.id) === String(p.id) && String(x.userId) === userId;
-      });
+      var deal = (db.deals || []).find(function (d) { return String(d.id) === String(p.id); });
       if (!deal) {
         return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'معامله برای پرداخت پیدا نشد.'));
       }
-      if (deal.status === 'cancelled') {
-        return Promise.resolve(Result.fail(Errors.CODES.DEAL_INVALID_STATE, 'این معامله لغو شده است.'));
-      }
       if (deal.paymentStatus === 'paid') {
-        return Promise.resolve(Result.ok({ deal: deal, alreadyPaid: true }, 'این توافق قبلاً پرداخت شده است'));
+        return Promise.resolve(Result.ok({ deal: deal }, 'قبلاً پرداخت شده است'));
       }
       deal.paymentStatus = 'paid';
-      if (method === 'cash') deal.paymentMethod = 'cash';
-      else if (method === 'online') deal.paymentMethod = 'online';
-      if (deal.status === 'agreed') deal.status = 'paid';
-      var amount = Number(deal.total) || 0;
+      deal.paidAt = new Date().toISOString();
       db.payments = db.payments || [];
       db.payments.push({
-        id: 'p' + Date.now(),
+        id: 'pay' + Date.now(),
         dealId: deal.id,
-        userId: userId,
-        amount: amount,
-        method: method,
-        status: 'paid',
-        createdAt: new Date().toISOString()
+        amount: deal.total || 0,
+        userId: p.userId,
+        createdAt: deal.paidAt
       });
       if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
-      var msg = method === 'cash' ? 'پرداخت نقدی ثبت شد' : 'پرداخت ثبت شد';
-      return Promise.resolve(Result.ok({ deal: deal }, msg));
+      return Promise.resolve(Result.ok({ deal: deal }, 'پرداخت ثبت شد'));
     },
 
+    /** Persist review — Domain ownership in DealService */
     createReview: function (payload) {
       var bridgeErr = requireDataAccess();
       if (bridgeErr) return Promise.resolve(bridgeErr);
@@ -596,14 +640,6 @@
       if (!deal) {
         return Promise.resolve(Result.fail(Errors.CODES.DEAL_NOT_FOUND, 'توافق پیدا نشد'));
       }
-      var isFarmer = String(deal.userId) === userId;
-      var isProvider = String(deal.providerId) === userId;
-      if (!isFarmer && !isProvider) {
-        return Promise.resolve(Result.fail(Errors.CODES.FORBIDDEN, 'فقط طرفین توافق می‌توانند گزارش ثبت کنند'));
-      }
-      if (deal.status !== 'completed') {
-        return Promise.resolve(Result.fail(Errors.CODES.DEAL_INVALID_STATE, 'فقط پس از تکمیل کار می‌توانید نظر ثبت کنید'));
-      }
       db.reviews = db.reviews || [];
       var already = db.reviews.some(function (r) {
         return String(r.dealId) === String(p.dealId) && String(r.userId) === userId;
@@ -611,6 +647,7 @@
       if (already) {
         return Promise.resolve(Result.fail(Errors.CODES.CONFLICT, 'قبلاً برای این توافق گزارش ثبت کرده‌اید'));
       }
+      var isFarmer = String(deal.userId) === userId;
       var targetId = isFarmer ? deal.providerId : deal.userId;
       var review = {
         id: 'rv' + Date.now(),
@@ -715,6 +752,327 @@
       db.dealLocations = db.dealLocations || {};
       var loc = db.dealLocations[String(p.dealId)] || null;
       return Promise.resolve(Result.ok({ location: loc }));
+    },
+
+
+
+    hasUnpaidCompletedDeal: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var uid = payload && payload.userId;
+      var Domain = (global.KeloDomain && global.KeloDomain.deal) || global.KeloDealDomain;
+      var blocked = Domain && Domain.farmerHasUnpaidCompleted
+        ? Domain.farmerHasUnpaidCompleted(db.deals || [], uid)
+        : false;
+      return Promise.resolve(Result.ok({ blocked: !!blocked }));
+    },
+    getTopProviders: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var minReviews = Math.max(1, Number(p.minReviews) || 1);
+      var limit = Math.max(1, Number(p.limit) || 12);
+      var service = p.service || null;
+      var me = p.userId || null;
+      var ratingMap = buildTargetRatingMap(db);
+
+      function locStr(v) {
+        if (v == null || v === '') return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'object') {
+          if (v.label) return String(v.label);
+          if (v.city) return String(v.city) + (v.province ? '، ' + v.province : '');
+          if (v.name) return String(v.name);
+          if (Array.isArray(v)) return v.filter(Boolean).map(locStr).filter(Boolean).join('، ');
+        }
+        return '';
+      }
+
+      var out = [];
+      function pushProvider(row) {
+        if (!row || !row.providerId) return;
+        if (me && String(row.providerId) === String(me)) return;
+        if (service && row.service && row.service !== service) return;
+        var info = ratingMap[String(row.providerId)]
+          || ratingMap[String(row.providerId || '').toLowerCase()]
+          || { rating: null, reviewCount: 0 };
+        if (!(info.reviewCount >= minReviews)) return;
+        // dedupe by provider+service
+        var key = String(row.providerId) + ':' + String(row.service || '');
+        if (out.some(function (x) { return String(x.providerId) + ':' + String(x.service || '') === key; })) return;
+        out.push({
+          providerId: row.providerId,
+          provider: row.provider || '',
+          listingId: row.listingId || null,
+          requestId: row.requestId || null,
+          service: row.service || '',
+          machineType: row.machineType || '',
+          unitPrice: Number(row.unitPrice || 0),
+          priceUnit: row.priceUnit || '',
+          location: locStr(row.location),
+          activityArea: row.activityArea || null,
+          dateStart: row.dateStart || null,
+          dateEnd: row.dateEnd || null,
+          requestData: row.requestData || null,
+          rating: info.rating,
+          reviewCount: info.reviewCount
+        });
+      }
+
+      // 1) active listings
+      (db.listings || []).forEach(function (l) {
+        if (!l) return;
+        if (l.status && l.status !== 'active') return;
+        var pid = l.providerId || l.userId;
+        var u = (db.users || []).find(function (x) { return String(x.id) === String(pid); });
+        pushProvider({
+          providerId: pid,
+          provider: l.providerName || l.provider || (u && u.name) || '',
+          listingId: l.id,
+          service: l.service,
+          machineType: (l.data && l.data.machineType) || l.machineType || '',
+          unitPrice: Number(l.price || (l.data && l.data.price) || 0),
+          priceUnit: l.priceUnit || (l.data && l.data.priceUnit) || '',
+          location: l.location || l.locationLabel || (l.data && l.data.location) || ''
+        });
+      });
+
+      // 2) active provide-requests (same card source as «درخواست‌های من»)
+      (db.requests || []).forEach(function (req) {
+        if (!req) return;
+        var kind = req.requestKind || req.request_kind || '';
+        if (kind !== 'provide') return;
+        var st = String(req.status || 'pending');
+        if (st === 'cancelled' || st === 'completed' || st === 'expired' || st === 'deleted') return;
+        var pid = req.userId || req.requesterId || req.requester_id;
+        var u = (db.users || []).find(function (x) { return String(x.id) === String(pid); });
+        var data = req.data || {};
+        pushProvider({
+          providerId: pid,
+          provider: (u && u.name) || '',
+          requestId: req.id,
+          service: req.service,
+          machineType: data.machineType || '',
+          unitPrice: Number(data.price || 0),
+          priceUnit: data.priceUnit || '',
+          location: data.serviceLocationLabel || data.location || '',
+          activityArea: data.activityArea || null,
+          dateStart: data.dateStart || req.dateStart || null,
+          dateEnd: data.dateEnd || req.dateEnd || null,
+          requestData: data
+        });
+      });
+
+      // 3) providers who completed/accepted deals (still machine-side only)
+      (db.deals || []).forEach(function (d) {
+        if (!d || d.status === 'cancelled') return;
+        var pid = d.providerId;
+        if (!pid) return;
+        var u = (db.users || []).find(function (x) { return String(x.id) === String(pid); });
+        pushProvider({
+          providerId: pid,
+          provider: (u && u.name) || d.providerName || '',
+          requestId: d.requestId || null,
+          service: d.service || '',
+          machineType: d.providerMachineType || '',
+          unitPrice: Number(d.unitPrice || d.total || 0),
+          priceUnit: d.priceUnit || '',
+          location: d.location || '',
+          dateStart: d.dateStart || null,
+          dateEnd: d.dateEnd || null
+        });
+      });
+
+      // NOTE: do NOT add pure review-targets — farmers also get reviews
+      out.sort(function (a, b) {
+        return (b.rating || 0) - (a.rating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0);
+      });
+      return Promise.resolve(Result.ok({ providers: out.slice(0, limit), minReviews: minReviews }));
+    },
+
+    listLands: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      if (!Array.isArray(db.lands)) db.lands = [];
+      var uid = payload && payload.userId;
+      var lands = db.lands.filter(function (x) {
+        return String(x.userId) === String(uid) && !x.deleted;
+      });
+      return Promise.resolve(Result.ok({ lands: lands }));
+    },
+    listFleet: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      if (!Array.isArray(db.fleet)) db.fleet = [];
+      var uid = payload && payload.userId;
+      var fleet = db.fleet.filter(function (x) {
+        return String(x.userId) === String(uid) && !x.deleted;
+      });
+      return Promise.resolve(Result.ok({ fleet: fleet }));
+    },
+    createLand: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      if (!Array.isArray(db.lands)) db.lands = [];
+      var p = payload || {};
+      var uid = p.userId;
+      var name = String(p.name || '').trim();
+      var nameKey = name.replace(/\s+/g, ' ').toLowerCase();
+      var dup = (db.lands || []).some(function (x) {
+        return x && !x.deleted && String(x.userId) === String(uid)
+          && String(x.name || '').trim().replace(/\s+/g, ' ').toLowerCase() === nameKey
+          && (!p.id || String(x.id) !== String(p.id));
+      });
+      if (dup) {
+        return Promise.resolve(Result.fail(
+          (Errors.CODES && Errors.CODES.VALIDATION) || 'VALIDATION',
+          'زمینی با این نام از قبل دارید. نام دیگری انتخاب کنید.'
+        ));
+      }
+      var land = {
+        id: p.id || ('land_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e4)),
+        userId: uid,
+        name: name || 'مزرعه من',
+        area: p.area != null ? Number(p.area) : null,
+        location: p.location || null,
+        city: p.city || (p.location && p.location.city) || '',
+        crop: p.crop || null,
+        createdAt: new Date().toISOString()
+      };
+      db.lands.push(land);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ land: land }, 'زمین ذخیره شد'));
+    },
+    updateLand: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var row = (db.lands || []).find(function (x) {
+        return String(x.id) === String(p.id) && String(x.userId) === String(p.userId) && !x.deleted;
+      });
+      if (!row) return Promise.resolve(Result.fail(Errors.CODES.NOT_FOUND || Errors.CODES.UNKNOWN, 'زمین پیدا نشد.'));
+      var name = String(p.name != null ? p.name : row.name || '').trim();
+      var nameKey = name.replace(/\s+/g, ' ').toLowerCase();
+      var dup = (db.lands || []).some(function (x) {
+        return x && !x.deleted && String(x.userId) === String(p.userId)
+          && String(x.id) !== String(p.id)
+          && String(x.name || '').trim().replace(/\s+/g, ' ').toLowerCase() === nameKey;
+      });
+      if (dup) {
+        return Promise.resolve(Result.fail(
+          (Errors.CODES && Errors.CODES.VALIDATION) || 'VALIDATION',
+          'زمینی با این نام از قبل دارید. نام دیگری انتخاب کنید.'
+        ));
+      }
+      if (p.name != null) row.name = name;
+      if (p.area != null) row.area = Number(p.area);
+      if (p.location) row.location = p.location;
+      if (p.city != null) row.city = p.city;
+      else if (p.location && p.location.city) row.city = p.location.city;
+      if (p.crop != null) row.crop = p.crop;
+      row.updatedAt = new Date().toISOString();
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ land: row }, 'زمین به‌روزرسانی شد'));
+    },
+    deleteLand: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var row = (db.lands || []).find(function (x) {
+        return String(x.id) === String(payload.id) && String(x.userId) === String(payload.userId);
+      });
+      if (!row) return Promise.resolve(Result.fail(Errors.CODES.NOT_FOUND || Errors.CODES.UNKNOWN, 'زمین پیدا نشد.'));
+      row.deleted = true;
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({}, 'زمین حذف شد'));
+    },
+    createMachine: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      if (!Array.isArray(db.fleet)) db.fleet = [];
+      var p = payload || {};
+      var mtype = String(p.machineType || p.name || '').trim();
+      var nameKey = mtype.replace(/\s+/g, ' ').toLowerCase();
+      var uid = p.userId;
+      var dup = (db.fleet || []).some(function (x) {
+        return x && !x.deleted && String(x.userId) === String(uid)
+          && String(x.machineType || x.name || '').trim().replace(/\s+/g, ' ').toLowerCase() === nameKey
+          && (!p.id || String(x.id) !== String(p.id));
+      });
+      if (dup) {
+        return Promise.resolve(Result.fail(
+          (Errors.CODES && Errors.CODES.VALIDATION) || 'VALIDATION',
+          'ماشینی با این نام از قبل دارید. نام دیگری انتخاب کنید.'
+        ));
+      }
+      var item = {
+        id: p.id || ('fleet_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e4)),
+        userId: uid,
+        name: mtype || 'ماشین من',
+        service: p.service,
+        machineType: mtype,
+        capacity: p.capacity || '',
+        photo: p.photo || null,
+        activityArea: p.activityArea || [],
+        priceUnit: p.priceUnit || '',
+        createdAt: new Date().toISOString()
+      };
+      db.fleet.push(item);
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ machine: item }, 'ماشین ذخیره شد'));
+    },
+    updateMachine: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var p = payload || {};
+      var row = (db.fleet || []).find(function (x) {
+        return String(x.id) === String(p.id) && String(x.userId) === String(p.userId) && !x.deleted;
+      });
+      if (!row) return Promise.resolve(Result.fail(Errors.CODES.NOT_FOUND || Errors.CODES.UNKNOWN, 'ماشین پیدا نشد.'));
+      var mtype = String(p.machineType != null ? p.machineType : (row.machineType || row.name || '')).trim();
+      var nameKey = mtype.replace(/\s+/g, ' ').toLowerCase();
+      var dup = (db.fleet || []).some(function (x) {
+        return x && !x.deleted && String(x.userId) === String(p.userId)
+          && String(x.id) !== String(p.id)
+          && String(x.machineType || x.name || '').trim().replace(/\s+/g, ' ').toLowerCase() === nameKey;
+      });
+      if (dup) {
+        return Promise.resolve(Result.fail(
+          (Errors.CODES && Errors.CODES.VALIDATION) || 'VALIDATION',
+          'ماشینی با این نام از قبل دارید. نام دیگری انتخاب کنید.'
+        ));
+      }
+      if (p.machineType != null || p.name != null) {
+        row.machineType = mtype;
+        row.name = mtype || row.name;
+      }
+      if (p.service != null) row.service = p.service;
+      if (p.capacity != null) row.capacity = p.capacity;
+      if (p.photo !== undefined) row.photo = p.photo;
+      row.updatedAt = new Date().toISOString();
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({ machine: row }, 'ماشین به‌روزرسانی شد'));
+    },
+
+    deleteMachine: function (payload) {
+      var bridgeErr = requireDataAccess();
+      if (bridgeErr) return Promise.resolve(bridgeErr);
+      var db = dataAccess.getDB();
+      var row = (db.fleet || []).find(function (x) {
+        return String(x.id) === String(payload.id) && String(x.userId) === String(payload.userId);
+      });
+      if (!row) return Promise.resolve(Result.fail(Errors.CODES.NOT_FOUND || Errors.CODES.UNKNOWN, 'ماشین پیدا نشد.'));
+      row.deleted = true;
+      if (typeof dataAccess.saveDB === 'function') dataAccess.saveDB();
+      return Promise.resolve(Result.ok({}, 'ماشین حذف شد'));
     },
   };
 

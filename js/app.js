@@ -178,8 +178,12 @@ if (window.KeloState && window.KeloState.installWindowBridge) window.KeloState.i
 
 function applyServerSnapshot(snapshot){
     if(!snapshot) return;
-    const data=snapshot.data||snapshot;
-    ['requests','listings','requestRecipients','bookings','deals','payments','machines','notifications'].forEach(function(k){
+    var data = snapshot.data || snapshot;
+    // unwrap common API shapes: {ok,data:snap}, {snapshot:snap}, {data:{requests:...}}
+    if (data && data.snapshot && typeof data.snapshot === 'object') data = data.snapshot;
+    if (data && data.data && (Array.isArray(data.data.requests) || Array.isArray(data.data.deals))) data = data.data;
+    if (!data || typeof data !== 'object') return;
+    ['requests','listings','requestRecipients','bookings','deals','payments','machines','notifications','reviews','users'].forEach(function(k){
         if(Array.isArray(data[k])) db[k]=cloneObject(data[k]);
     });
     // Marketplace data is authoritative on the server. Keep localStorage only
@@ -330,9 +334,9 @@ function renderMobileHome(){
     c.className='content';
     // Order: first visible = online (was 3rd), then machine, then farmer (1↔3 swap)
     const banners = [
-        { src: 'https://cdn.imgurl.ir/uploads/b97617_B._online.jpg', alt: 'آنلاین', openRequest: false },
+        { src: 'https://cdn.imgurl.ir/uploads/u42901_b._farmer.jpg', alt: 'کشاورز', openRequest: true },
         { src: 'https://cdn.imgurl.ir/uploads/x229369_b._machindar.jpg', alt: 'ماشین‌دار', openRequest: true },
-        { src: 'https://cdn.imgurl.ir/uploads/u42901_b._farmer.jpg', alt: 'کشاورز', openRequest: true }
+        { src: 'https://cdn.imgurl.ir/uploads/b97617_B._online.jpg', alt: 'آنلاین', openRequest: false }
     ];
     const nB = banners.length;
     const slidePct = (100 / nB).toFixed(6);
@@ -364,9 +368,11 @@ function renderMobileHome(){
         +   '</div>'
         +   '<div class="home-banner-dots" id="homeBannerDots">' + dots + '</div>'
         + '</div>'
+        + '<div id="homeTopProvidersMount"></div>'
         + '</div>';
     initHomeBannerSlider();
     if (typeof bindHomeFlowClicks === 'function') bindHomeFlowClicks(c);
+    if (typeof loadAndPaintHomeTopProviders === 'function') loadAndPaintHomeTopProviders(c);
 }
 
 function initHomeBannerSlider(){
