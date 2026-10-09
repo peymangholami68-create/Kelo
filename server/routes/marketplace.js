@@ -161,6 +161,35 @@ function mapReview(row) {
     createdAt: row.created_at
   };
 }
+
+/** Average star rating from reviews.ratings jsonb per target user */
+async function getTargetRatingsMap(clientOrPool, targetIds) {
+  const ids = (targetIds || []).filter(Boolean).map(String);
+  const map = new Map();
+  if (!ids.length) return map;
+  const q = clientOrPool.query ? clientOrPool : pool;
+  const r = await q.query(
+    `select target_id,
+            count(*)::int as review_count,
+            avg((
+              select avg((value)::text::float)
+              from jsonb_each_text(ratings)
+              where (value)::text ~ '^[0-9]+(\\.[0-9]+)?$'
+            )) as avg_rating
+     from reviews
+     where target_id = any($1::uuid[])
+     group by target_id`,
+    [ids]
+  );
+  r.rows.forEach(row => {
+    map.set(String(row.target_id), {
+      rating: row.avg_rating != null ? Math.round(Number(row.avg_rating) * 10) / 10 : null,
+      reviewCount: Number(row.review_count) || 0
+    });
+  });
+  return map;
+}
+
 function mapDeal(row) {
   return { id: row.id, requestId: row.request_id, bookingId: row.booking_id, userId: row.requester_id, providerId: row.provider_id, requesterName: row.requester_name || '', requesterPhone: row.requester_phone || '', providerName: row.provider_name || '', providerPhone: row.provider_phone || '', location: row.service_location_label || '', dateStart: row.date_start || null, dateEnd: row.date_end || null, requestData: row.request_data || null, requestArea: row.request_area == null ? null : Number(row.request_area), requestLocation: row.request_location || null, providerMachineType: row.provider_machine_type || '', machineId: row.machine_id, service: row.service_slug, total: Number(row.total || 0), unitPrice: Number(row.unit_price || 0), priceUnit: row.price_unit || '', commissionRate: Number(row.commission_rate || 0), commissionAmount: Number(row.commission_amount || 0), providerAmount: Number(row.provider_amount || 0), paymentStatus: row.payment_status, status: row.status, createdAt: row.created_at, cancelledAt: row.cancelled_at, completedAt: row.completed_at };
 }
@@ -328,12 +357,31 @@ router.post('/requests', auth, async (req, res, next) => {
     if(!serviceId) return res.status(400).json({ok:false,error:'نوع خدمت معتبر نیست.'});
     const data=body.data && typeof body.data==='object' ? body.data : {};
     const requestKind = body.requestKind === 'provide' ? 'provide' : 'need';
+    // Phase 1: farmer unpaid completed deal blocks new need requests
+    if (requestKind === 'need') {
+      const unpaid = await client.query(
+        `select id from deals where requester_id=$1 and status='completed' and payment_status is distinct from 'paid' limit 1`,
+        [req.session.userId]
+      );
+      if (unpaid.rows[0]) {
+        return res.status(409).json({ok:false,error:'ابتدا پرداخت کار تمام‌شده را ثبت کنید تا بتوانید درخواست جدید بزنید.'});
+      }
+    }
     const start=String(data.dateStart || data.date || '').trim();
     const end=data.dateEnd ? String(data.dateEnd).trim() : null;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(start)) return res.status(400).json({ok:false,error:'تاریخ شروع معتبر نیست.'});
     if(end && !/^\d{4}-\d{2}-\d{2}$/.test(end)) return res.status(400).json({ok:false,error:'تاریخ پایان معتبر نیست.'});
+    if (end && start && end < start) return res.status(400).json({ok:false,error:'تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد.'});
     const area=data.area != null ? asNumber(data.area) : null;
     if(area !== null && area <= 0) return res.status(400).json({ok:false,error:'مساحت معتبر نیست.'});
+    if (requestKind === 'need') {
+      if (area == null || !(area > 0)) return res.status(400).json({ok:false,error:'مساحت زمین برای درخواست نیاز الزامی است.'});
+    }
+    if (requestKind === 'provide') {
+      const price = data.price != null ? asNumber(data.price) : null;
+      if (price == null || !(price > 0)) return res.status(400).json({ok:false,error:'قیمت برای ارائه خدمت الزامی است.'});
+      if (!data.machineType) return res.status(400).json({ok:false,error:'نوع ماشین‌آلات الزامی است.'});
+    }
     const loc=data.serviceLocation && typeof data.serviceLocation==='object' ? data.serviceLocation : null;
     const inserted=await client.query(`insert into requests(requester_id,request_kind,service_type_id,area_ha,date_start,date_end,service_location,service_location_label,data,note,status)
       values($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,'pending') returning id`, [req.session.userId,requestKind,serviceId,area,start,end,loc?JSON.stringify(loc):null,data.serviceLocationLabel||null,JSON.stringify(data),data.note||'']);
@@ -364,10 +412,31 @@ router.delete('/requests/:id', auth, async (req,res,next)=>{
   const client=await pool.connect();
   try{
     await client.query('begin');
-    const r=await client.query(`update requests set status='cancelled', updated_at=now() where id=$1 and requester_id=$2 and status not in ('accepted','in_progress','completed','cancelled') returning id`,[req.params.id,req.session.userId]);
-    if(!r.rowCount){await client.query('rollback');return res.status(404).json({ok:false,error:'درخواست پیدا نشد یا قابل حذف نیست.'});}
-    // Keep the request for history (soft delete) and close any still-active proposals.
-    await client.query(`update request_recipients set status='closed', closed_at=now() where request_id=$1 and status in ('pending','accepted')`,[req.params.id]);
+    // NOTE: request_status enum has no 'agreed' — using only valid enum labels
+    const r=await client.query(
+      `update requests
+          set status='cancelled', updated_at=now()
+        where id=$1 and requester_id=$2
+          and status not in (
+            'accepted'::request_status,
+            'in_progress'::request_status,
+            'completed'::request_status,
+            'cancelled'::request_status,
+            'expired'::request_status
+          )
+        returning id`,
+      [req.params.id, req.session.userId]
+    );
+    if(!r.rowCount){
+      await client.query('rollback');
+      return res.status(404).json({ok:false,error:'درخواست پیدا نشد یا قابل حذف نیست.'});
+    }
+    await client.query(
+      `update request_recipients
+          set status='closed'::recipient_status, closed_at=now()
+        where request_id=$1 and status in ('pending'::recipient_status,'accepted'::recipient_status)`,
+      [req.params.id]
+    );
     await client.query('commit');
     res.json({ok:true,data:await getSnapshot(req.session.userId)});
   }catch(e){try{await client.query('rollback')}catch(_){} next(e)}finally{client.release()}
@@ -385,10 +454,178 @@ router.post('/listings', auth, async (req,res,next)=>{
 router.patch('/listings/:id', auth, async(req,res,next)=>{try{const body=req.body||{},data=body.data||{};const r=await pool.query(`update service_listings l set machine_type=$1,capacity=$2,price=$3,price_unit=$4,activity_area=$5::jsonb,location_label=$6,availability_start=$7,availability_end=$8,notes=$9,data=$10::jsonb where l.id=$11 and l.provider_id=$12 returning l.id`,[data.machineType||null,data.capacity||null,asNumber(data.price),data.priceUnit||'',JSON.stringify(data.activityArea||[]),data.location||data.locationLabel||null,data.dateStart||null,data.dateEnd||null,data.note||'',JSON.stringify(data||{}),req.params.id,req.session.userId]);if(!r.rowCount)return res.status(404).json({ok:false,error:'خدمت پیدا نشد.'});res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}});
 router.delete('/listings/:id',auth,async(req,res,next)=>{try{const r=await pool.query(`update service_listings set status='blocked' where id=$1 and provider_id=$2 returning id`,[req.params.id,req.session.userId]);if(!r.rowCount)return res.status(404).json({ok:false,error:'خدمت پیدا نشد.'});res.json({ok:true,data:await getSnapshot(req.session.userId)})}catch(e){next(e)}});
 
+
+router.get('/providers/top', auth, async (req, res, next) => {
+  try {
+    const minReviews = Math.max(1, Math.min(20, parseInt(req.query.minReviews || '1', 10) || 1));
+    const limit = Math.max(1, Math.min(30, parseInt(req.query.limit || '12', 10) || 12));
+    const serviceSlug = req.query.service ? String(req.query.service) : null;
+    let serviceFilter = '';
+    const params = [req.session.userId, minReviews, limit];
+    if (serviceSlug) {
+      serviceFilter = ' and s.slug = $4 ';
+      params.push(serviceSlug);
+    }
+    // Active listings + rating from reviews where target is provider
+    const rows = await pool.query(
+      `with provider_stats as (
+         select target_id,
+                count(*)::int as review_count,
+                avg((
+                  select avg((value)::text::float)
+                  from jsonb_each_text(ratings)
+                  where (value)::text ~ '^[0-9]+(\\.[0-9]+)?$'
+                )) as avg_rating
+         from reviews
+         group by target_id
+         having count(*) >= $2
+       )
+       select l.id as listing_id, l.provider_id, l.machine_id, l.machine_type, l.capacity,
+              l.price, l.price_unit, l.location_label, l.activity_area,
+              p.full_name as provider_name, s.slug as service_slug,
+              ps.avg_rating, ps.review_count
+       from service_listings l
+       join service_types s on s.id = l.service_type_id
+       left join profiles p on p.user_id = l.provider_id
+       join provider_stats ps on ps.target_id = l.provider_id
+       where l.status = 'active' and l.provider_id <> $1
+       ${serviceFilter}
+       order by ps.avg_rating desc nulls last, ps.review_count desc, l.created_at desc
+       limit $3`,
+      params
+    );
+    const out = rows.rows.map(x => ({
+      providerId: x.provider_id,
+      provider: x.provider_name || 'ارائه‌دهنده',
+      listingId: x.listing_id,
+      machineId: x.machine_id,
+      service: x.service_slug,
+      machineType: x.machine_type || '',
+      capacity: x.capacity || '',
+      unitPrice: Number(x.price || 0),
+      priceUnit: x.price_unit || '',
+      location: x.location_label || '',
+      rating: x.avg_rating != null ? Math.round(Number(x.avg_rating) * 10) / 10 : null,
+      reviewCount: Number(x.review_count) || 0
+    }));
+    // Soft listings: active provide-requests with ratings (when no service_listings row)
+    const softParams = [req.session.userId, minReviews, limit];
+    let softFilter = '';
+    if (serviceSlug) { softFilter = ' and s.slug = $4 '; softParams.push(serviceSlug); }
+    const soft = await pool.query(
+      `with provider_stats as (
+         select target_id, count(*)::int as review_count,
+                avg((select avg((value)::text::float) from jsonb_each_text(ratings)
+                     where (value)::text ~ '^[0-9]+(\\.[0-9]+)?$')) as avg_rating
+         from reviews group by target_id having count(*) >= $2
+       )
+       select r.id as request_id, r.requester_id as provider_id, r.data,
+              r.date_start, r.date_end, r.service_location_label,
+              p.full_name as provider_name, s.slug as service_slug,
+              ps.avg_rating, ps.review_count
+       from requests r
+       join service_types s on s.id = r.service_type_id
+       left join profiles p on p.user_id = r.requester_id
+       join provider_stats ps on ps.target_id = r.requester_id
+       where r.request_kind = 'provide'
+         and r.status in ('created','matching','sent','pending','accepted')
+         and r.requester_id <> $1
+         ${softFilter}
+       order by ps.avg_rating desc nulls last, ps.review_count desc
+       limit $3`,
+      softParams
+    );
+    const seen = new Set(out.map(x => String(x.providerId) + ':' + String(x.service)));
+    soft.rows.forEach(function (x) {
+      const key = String(x.provider_id) + ':' + String(x.service_slug);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const data = x.data || {};
+      out.push({
+        providerId: x.provider_id,
+        provider: x.provider_name || 'ارائه‌دهنده',
+        listingId: null,
+        requestId: x.request_id,
+        machineId: null,
+        service: x.service_slug,
+        machineType: data.machineType || '',
+        capacity: data.capacity || '',
+        unitPrice: Number(data.price || 0),
+        priceUnit: data.priceUnit || '',
+        location: data.location || '',
+        activityArea: data.activityArea || null,
+        dateStart: data.dateStart || x.date_start || null,
+        dateEnd: data.dateEnd || x.date_end || null,
+        requestData: data,
+        rating: x.avg_rating != null ? Math.round(Number(x.avg_rating) * 10) / 10 : null,
+        reviewCount: Number(x.review_count) || 0
+      });
+    });
+    // Rated providers without listing/provide-request still appear after a review
+    // Providers who appeared as provider_id on deals (machine side only).
+    // deals table has no provider_machine_type / service_location_label / date_* —
+    // pull those from the related request when available.
+    const dealProv = await pool.query(
+      `with provider_stats as (
+         select target_id, count(*)::int as review_count,
+                avg((select avg((value)::text::float) from jsonb_each_text(ratings)
+                     where (value)::text ~ '^[0-9]+(\.[0-9]+)?$')) as avg_rating
+         from reviews group by target_id having count(*) >= $2
+       )
+       select distinct on (d.provider_id, s.slug)
+              d.provider_id, p.full_name as provider_name, s.slug as service_slug,
+              d.unit_price, d.price_unit, d.request_id,
+              coalesce(r.data->>'machineType', '') as machine_type,
+              coalesce(r.service_location_label, r.data->>'location', '') as location_label,
+              r.date_start, r.date_end,
+              ps.avg_rating, ps.review_count
+         from deals d
+         join service_types s on s.id = d.service_type_id
+         join provider_stats ps on ps.target_id = d.provider_id
+         left join profiles p on p.user_id = d.provider_id
+         left join requests r on r.id = d.request_id
+        where d.provider_id <> $1
+          and d.status <> 'cancelled'
+          and ($4::text is null or s.slug = $4)
+        order by d.provider_id, s.slug, d.created_at desc
+        limit $3`,
+      [req.session.userId, minReviews, limit, serviceSlug || null]
+    );
+    dealProv.rows.forEach(function (x) {
+      const key = String(x.provider_id) + ':' + String(x.service_slug || '');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({
+        providerId: x.provider_id,
+        provider: x.provider_name || 'ارائه‌دهنده',
+        listingId: null,
+        requestId: x.request_id,
+        machineId: null,
+        service: x.service_slug,
+        machineType: x.machine_type || '',
+        capacity: '',
+        unitPrice: Number(x.unit_price || 0),
+        priceUnit: x.price_unit || '',
+        location: x.location_label || '',
+        dateStart: x.date_start || null,
+        dateEnd: x.date_end || null,
+        rating: x.avg_rating != null ? Math.round(Number(x.avg_rating) * 10) / 10 : null,
+        reviewCount: Number(x.review_count) || 0
+      });
+    });
+    out.sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0));
+    res.json({ ok: true, providers: out.slice(0, limit), minReviews });
+  } catch (e) { next(e); }
+});
+
+
 router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
   const r=await pool.query(`select r.*,s.slug service_slug from requests r join service_types s on s.id=r.service_type_id where r.id=$1`,[req.params.id]);
   if(!r.rows[0]) return res.status(404).json({ok:false,error:'درخواست پیدا نشد.'});
   const request=r.rows[0];
+  if (String(request.requester_id) !== String(req.session.userId)) {
+    return res.status(403).json({ok:false,error:'دسترسی به پیشنهاددهندگان این درخواست مجاز نیست.'});
+  }
   const out=[];
   // Do not hide providers who already have a pending/accepted proposal on this
   // request — the farmer sheet needs them visible so the button can toggle to
@@ -411,6 +648,18 @@ router.get('/requests/:id/providers',auth,async(req,res,next)=>{try{
       where r.request_kind='need' and r.status not in ('cancelled','completed','expired') and r.requester_id<>$1 and r.service_type_id=$2 order by r.created_at desc`,[request.requester_id,request.service_type_id]);
     needs.rows.forEach(x=>{ out.push({providerId:x.requester_id,provider:x.requester_name||'درخواست‌دهنده',machineId:null,listingId:null,service:x.service_slug,unitPrice:0,priceUnit:'',rating:null,location:x.service_location_label||'',data:{...(x.data||{}),requestId:x.request_id,requestKind:'need'}}); });
   }
+    // Attach review averages
+  const ratingMap = await getTargetRatingsMap(pool, out.map(x => x.providerId));
+  out.forEach(row => {
+    const info = ratingMap.get(String(row.providerId));
+    if (info) {
+      row.rating = info.rating;
+      row.reviewCount = info.reviewCount;
+    } else {
+      row.rating = null;
+      row.reviewCount = 0;
+    }
+  });
     // Dedupe by providerId (listing + provide request can both match)
   const seenProv = new Set();
   const deduped = [];
